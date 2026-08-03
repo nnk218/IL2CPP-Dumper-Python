@@ -28,6 +28,22 @@ This project automates that. It's written in pure Python (no third-party package
 
 The core dumpers (`dump_game.py`, `dump_metadata.py`) need **only Python** — no phone, no adb.
 
+### Optional: install as commands (pip)
+
+The project is pip-installable. Installing exposes `dump-game`, `dump-metadata`,
+and `dump-memory` as shell commands:
+
+```bash
+pip install .
+# then:
+dump-game -g game.apk -o out/
+dump-metadata -i global-metadata.dat -o dump.txt
+dump-memory --package com.example.game --dump-binary
+```
+
+You can also run the scripts directly with `python3 dump_game.py ...` — both
+styles are equivalent.
+
 ---
 
 ## Getting started (first 5 minutes)
