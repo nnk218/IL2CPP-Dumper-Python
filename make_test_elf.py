@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate synthetic ELF fixtures for testing il2cpp_bin_dumper.py.
+"""Generate synthetic ELF fixtures for testing dump_game.py.
 
   --bits 64 (default): 64-bit ELF (x86-64)
      libil2cpp_test.so       - symbol-search fixture (v31 code registration,
@@ -353,11 +353,11 @@ def assemble_elf(data, syms, bits: int):
 
 def self_check_elf(path, meta_path, expect_scan, bits):
     if bits == 64:
-        from il2cpp_bin_dumper import Elf64Binary as ElfBinary_
+        from dump_game import Elf64Binary as ElfBinary_
     else:
-        from il2cpp_bin_dumper import Elf32Binary as ElfBinary_
-    from il2cpp_bin_dumper import SectionHelper
-    from il2cpp_meta_dumper import Metadata
+        from dump_game import Elf32Binary as ElfBinary_
+    from dump_game import SectionHelper
+    from dump_metadata import Metadata
 
     b = ElfBinary_(open(path, "rb").read())
     assert b.ptr == (8 if bits == 64 else 4)

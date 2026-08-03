@@ -1,92 +1,244 @@
 # IL2CPP-Dumper-Python
 
-A Python-based IL2CPP dumper for Unity games. It locates `Il2CppCodeRegistration` / `Il2CppMetadataRegistration` in a game binary, resolves methods/types/strings, and produces both machine-readable JSON and a human-readable `dump.cs`.
+A Python toolkit for dumping Unity IL2CPP games: it extracts method/type/string information from a game's `libil2cpp.so` + `global-metadata.dat`, producing both machine-readable JSON and a human-readable C# `dump.cs`.
 
-Written from scratch (with reference to Perfare/Il2CppDumper's PR-903), targeting real-world stripped Android `libil2cpp.so` + `global-metadata.dat` pairs, including **XOR-protected** and **LIKEY-custom-encrypted** games.
+It handles real-world stripped Android binaries, XOR-protected metadata, and even games with custom encryption (e.g. the `LIKEY` scheme) by reading the decrypted data from a running game's memory.
 
-## Features
+---
 
-- **`il2cpp_bin_dumper.py`** — the main dumper:
-  - Auto-discover `libil2cpp.so` + `global-metadata.dat` from an APK / AAB / XAPK (including nested inner-APKs) or an extracted game directory (`-g`)
-  - ABI auto-detection: prefers **arm64-v8a** over armeabi-v7a when both are present
-  - Symbol search + stripped-binary section scan (mscorlib reference walk + typeDefinitionsCount heuristic)
-  - Applies ELF relocations in-memory (required for reloc-applied pointer chains)
-  - v24–v39 metadata support (variable-width indexes, v38+ section layout, blob strings)
-  - `--dump-cs` produces a human-readable `dump.cs` (classes, fields with offsets, properties, methods with RVA/Offset/VA, const/param default values, generic instantiations)
-  - `--xor-key` and automatic XOR key detection for protected metadata
-- **`root_memscan.py`** — bypasses custom metadata encryption (e.g. the `LIKEY` scheme) by scanning a rooted device's process memory over adb for the decrypted header (magic `0xFAB11BAF`) and dumping the decrypted `global-metadata.dat` plus an in-memory copy of `libil2cpp.so` with relocations applied. **No Frida required.**
-- **`il2cpp_meta_dumper.py`** — standalone `global-metadata.dat` parser/renderer (text + JSON), with XOR and version overrides.
-- **Test fixtures** — `make_test_metadata.py` + `make_test_elf.py` generate synthetic v31 metadata and ELF binaries; `run_sweep.py` runs the 8-combo regression sweep.
+## What this project does
+
+Unity IL2CPP games compile C# code to native machine code (`libil2cpp.so`) and store class/method metadata in a companion file (`global-metadata.dat`). Dumping a game means combining these two files to reconstruct readable C#-like definitions:
+
+- Which classes/methods exist and where they are in memory (addresses)
+- Method signatures, fields, properties, string literals
+- A human-readable `dump.cs` you can browse
+
+This project automates that. It's written in pure Python (no third-party packages for the core dumpers).
+
+---
 
 ## Requirements
 
-- Python 3.8+
-- No third-party packages for the dumpers
-- `adb` (Android platform-tools) + a rooted phone for `root_memscan.py`
+| Tool | Needed for | How to get it |
+|---|---|---|
+| Python 3.8+ | Everything | `sudo pacman -S python` (Arch/CachyOS) |
+| `adb` | Only `dump_memory.py` (running-game dumps) | `sudo pacman -S android-tools` |
+| A rooted phone | Only `dump_memory.py` | e.g. Magisk, KernelSU, SuKisu |
 
-## Usage
+The core dumpers (`dump_game.py`, `dump_metadata.py`) need **only Python** — no phone, no adb.
 
-### Dump from an APK / XAPK (auto-discovery)
+---
 
-```bash
-python3 il2cpp_bin_dumper.py -g game.apk -o out/
-python3 il2cpp_bin_dumper.py -g game.xapk -o out/     # recurses into inner APKs
+## Getting started (first 5 minutes)
+
+### 1. Find your game files
+
+A Unity IL2CPP Android game ships with:
+
+```
+libil2cpp.so          (native binary)
+global-metadata.dat   (metadata - inside the APK at assets/bin/Data/Managed/Metadata/)
 ```
 
-### Dump from an explicit pair
+If you only have the APK/XAPK, the dumper can extract both automatically (see below).
+
+### 2. Run the dumper
 
 ```bash
-python3 il2cpp_bin_dumper.py -b libil2cpp.so -m global-metadata.dat -o out/
+# From an APK or XAPK (auto-discovers both files):
+python3 dump_game.py -g game.apk -o out/
+
+# Or from already-extracted files:
+python3 dump_game.py -b libil2cpp.so -m global-metadata.dat -o out/
 ```
 
-### Also produce human-readable dump.cs
+### 3. Read the results
+
+After it finishes, `out/` contains:
+
+| File | What it is |
+|---|---|
+| `script.json` | All methods, strings, type infos and addresses (for tools/scripts) |
+| `stringliteral.json` | String literals with their addresses |
+| `dump.cs` | Human-readable C# classes/methods (add `--dump-cs` to generate) |
+
+For a human-readable dump, run:
 
 ```bash
-python3 il2cpp_bin_dumper.py -g game.apk --dump-cs -o out/
+python3 dump_game.py -g game.apk --dump-cs -o out/
+# -> produces out/dump.cs, a .cs file you can open in any text editor
 ```
 
-### Protected metadata
+---
+
+## Detailed usage
+
+### Dump from an APK / XAPK (recommended)
 
 ```bash
-# known XOR key
-python3 il2cpp_bin_dumper.py -b libil2cpp.so -m global-metadata.dat --xor-key <hex> -o out/
-# or auto-detect (works for 4-byte repeating keys)
-python3 il2cpp_bin_dumper.py -b libil2cpp.so -m global-metadata.dat -o out/
+python3 dump_game.py -g game.apk -o out/
+python3 dump_game.py -g game.xapk -o out/
 ```
 
-### Custom-encrypted metadata (LIKEY etc.) — dump from a running game
+The `-g` flag searches inside the archive for `libil2cpp.so` and `global-metadata.dat`. It handles:
+- Plain APKs
+- XAPKs (which wrap several APKs) — it recurses into the inner `.apk` files
+- Multiple CPU architectures (ABIs) — prefers **arm64-v8a** (64-bit) over armeabi-v7a (32-bit)
+
+### Dump from extracted files
 
 ```bash
-python3 root_memscan.py --package com.example.game --dump-binary
+python3 dump_game.py -b /path/to/libil2cpp.so -m /path/to/global-metadata.dat -o out/
+```
 
-# then dump the decrypted pair
-python3 il2cpp_bin_dumper.py -b likey_dump/libil2cpp.memorydump.so \
+### Protected metadata (XOR-encrypted)
+
+Some games XOR-encrypt `global-metadata.dat`. If you see:
+
+```
+error: bad magic - file may be protected
+```
+
+either pass the XOR key:
+
+```bash
+python3 dump_game.py -b libil2cpp.so -m global-metadata.dat --xor-key <hex-key> -o out/
+```
+
+or let the dumper try to auto-detect it (works for 4-byte repeating keys):
+
+```bash
+python3 dump_game.py -b libil2cpp.so -m global-metadata.dat -o out/
+```
+
+### Custom-encrypted games (LIKEY, etc.)
+
+If the metadata starts with a custom marker like `LIKEY`, static tools (including the original Il2CppDumper) fail. The fix is to read the **decrypted** copy from the running game's memory.
+
+```bash
+# 1. On the PC, phone connected (USB debugging + root), game open:
+python3 dump_memory.py --package com.example.game --dump-binary
+
+# 2. This writes:
+#    likey_dump/global-metadata.decrypted.<addr>.dat  (the decrypted metadata)
+#    likey_dump/libil2cpp.memorydump.so               (the lib, with relocations applied)
+
+# 3. Dump normally:
+python3 dump_game.py -b likey_dump/libil2cpp.memorydump.so \
     -m likey_dump/global-metadata.decrypted.<addr>.dat -o out/
 ```
+
+> `dump_memory.py` needs `adb` + a rooted phone. It does **not** need Frida or any app installed on the phone.
 
 ### Standalone metadata inspection
 
 ```bash
-python3 il2cpp_meta_dumper.py -i global-metadata.dat -o dump.txt
-python3 il2cpp_meta_dumper.py -i global-metadata.dat --json --strings
+# Text dump to screen:
+python3 dump_metadata.py -i global-metadata.dat
+
+# To a file, plus a JSON dump and string tables:
+python3 dump_metadata.py -i global-metadata.dat -o dump.txt --json --strings
 ```
 
-### Tests
+### Forcing a metadata version (advanced)
+
+If auto-detection picks the wrong version:
+
+```bash
+python3 dump_game.py -b libil2cpp.so -m global-metadata.dat --version 39 -o out/
+```
+
+---
+
+## All command-line options
+
+### dump_game.py
+
+| Option | Description |
+|---|---|
+| `-g, --game PATH` | APK/AAB/XAPK file or extracted game directory (auto-discovery) |
+| `-b, --binary` | Explicit `libil2cpp.so` / `GameAssembly.dll` (overrides `-g`) |
+| `-m, --metadata` | Explicit `global-metadata.dat` (overrides `-g`) |
+| `-o, --output` | Output directory (default: current directory) |
+| `--version` | Force il2cpp version (e.g. `39`) |
+| `--xor-key HEX` | XOR key to decrypt protected metadata |
+| `--dump-cs` | Also write a human-readable `dump.cs` |
+| `--no-symbol` | Skip symbol search (force the scan-based lookup) |
+
+### dump_metadata.py
+
+| Option | Description |
+|---|---|
+| `-i, --input` | Path to `global-metadata.dat` |
+| `-o, --output` | Write text dump to a file (default: stdout) |
+| `--version` | Force metadata version |
+| `--xor-key HEX` | XOR key for protected metadata |
+| `--xor-offset` | Start XOR decryption at this byte offset |
+| `--json` | Also write a `.json` dump |
+| `--strings` | Include string literal/string tables |
+
+### dump_memory.py
+
+| Option | Description |
+|---|---|
+| `--package` | Game package name, e.g. `com.example.game` |
+| `--pid` | Process PID (alternative to `--package`) |
+| `--adb` | Path to the adb binary (default: search PATH) |
+| `--size` | Bytes to dump from the found metadata header |
+| `--dump-binary` | Also dump `libil2cpp.so` from memory (relocations applied) |
+| `--out` | Output directory (default: `likey_dump/`) |
+
+---
+
+## Running the tests
+
+The repo includes a self-contained test suite (synthetic metadata + ELF fixtures, no game files needed):
 
 ```bash
 python3 make_test_metadata.py
 python3 make_test_elf.py --bits 64
 python3 make_test_elf.py --bits 32
-python3 run_sweep.py        # 10/10 combos
+python3 run_sweep.py        # 10/10 combinations should PASS
 ```
 
-## Outputs
+---
 
-- **`script.json`** — `ScriptMethod`, `ScriptString`, `ScriptMetadata`, `ScriptMetadataMethod`, `Addresses` (Il2CppDumper-compatible schema)
-- **`stringliteral.json`** — string literals with addresses
-- **`dump.cs`** — human-readable C# reconstruction (with `--dump-cs`)
+## Troubleshooting
+
+**"error: bad magic - file may be protected"**
+→ The metadata is XOR-encrypted. Provide `--xor-key <hex>` (or let auto-detection try).
+
+**"error: could not locate registrations"**
+→ The binary is heavily stripped. If it's a `LIKEY`-style game, use `dump_memory.py` to get the in-memory lib + decrypted metadata. For other games, try `--no-symbol` or check that the `libil2cpp.so` and `global-metadata.dat` are from the *same* build.
+
+**"error: could not find PID for <package>"**
+→ The game must be running. Also check that `su` grants root to adb's shell (in your root manager's allowlist).
+
+**`adb devices` shows "unauthorized"**
+→ Accept the USB-debugging prompt on the phone, or re-authorize in developer options.
+
+**The dump looks wrong / version mismatch**
+→ Try `--version <n>` to force the metadata version.
+
+**dump.cs is missing**
+→ Add `--dump-cs` to the `dump_game.py` command.
+
+---
+
+## Project layout
+
+```
+dump_game.py            Main dumper: APK discovery, registration search, script.json + dump.cs
+dump_metadata.py        Standalone global-metadata.dat parser/renderer
+dump_memory.py          Rooted-device memory dumper (LIKEY / custom-encrypted games)
+likey_dump.py           (legacy) Frida-based metadata scanner
+make_test_elf.py        Synthetic ELF fixture generator (tests)
+make_test_metadata.py   Synthetic metadata fixture generator (tests)
+run_sweep.py            Regression test runner
+```
 
 ## Notes
 
-- Validated against Perfare/Il2CppDumper output on multiple real 64-bit Unity games (byte-identical classes/members when attributes are disabled).
-- Real-game assets and dump outputs are excluded via `.gitignore`; only source + synthetic fixtures are committed.
+- Validated against Perfare/Il2CppDumper output on multiple real 64-bit Unity games (byte-identical classes/members with attributes off).
+- Real-game assets and dump outputs are excluded from the repo via `.gitignore`; only source and synthetic fixtures are committed.

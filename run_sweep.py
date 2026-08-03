@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression sweep for il2cpp_bin_dumper.py across fixture combinations.
+"""Regression sweep for dump_game.py across fixture combinations.
 
 Covers the 8 combos:
     bits:     64 / 32
@@ -28,7 +28,7 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BINDUMPER = os.path.join(HERE, "il2cpp_bin_dumper.py")
+BINDUMPER = os.path.join(HERE, "dump_game.py")
 XOR_KEY = "00112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f"
 
 # 4-byte repeating key fixture (auto-detectable without --xor-key)
@@ -37,7 +37,7 @@ KEY4 = bytes([0x05, 0x06, 0x07, 0x08])
 
 def _make_xor4():
     """sample_xor4.dat: sample.dat XOR'd with a 4-byte key (no --xor-key needed)."""
-    from il2cpp_meta_dumper import xor_decrypt
+    from dump_metadata import xor_decrypt
     src = os.path.join(HERE, "sample.dat")
     out = os.path.join(HERE, "sample_xor4.dat")
     if not os.path.exists(out):

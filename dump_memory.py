@@ -15,9 +15,9 @@ Prereqs (no app installs on the phone):
   - root available via `su`
 
 Usage:
-    python3 root_memscan.py --package com.loadcomplete.minitales
-    python3 root_memscan.py --pid 21231
-    python3 root_memscan.py --package com.loadcomplete.minitales --size 0x1000000
+    python3 dump_memory.py --package com.loadcomplete.minitales
+    python3 dump_memory.py --pid 21231
+    python3 dump_memory.py --package com.loadcomplete.minitales --size 0x1000000
 
 The decrypted metadata is dumped to ./likey_dump/global-metadata.decrypted.<va>.dat
 """
@@ -261,7 +261,7 @@ def main():
         print("[+] wrote %s (%d bytes, version %d)" % (fn, len(blob), ver))
     if args.dump_binary:
         dump_binary(pid, ranges, args.out)
-    print("[+] done. Feed the file to il2cpp_bin_dumper with -b/-m.")
+    print("[+] done. Feed the file to dump_game.py with -b/-m.")
 
 
 def dump_binary(pid, maps, outdir):

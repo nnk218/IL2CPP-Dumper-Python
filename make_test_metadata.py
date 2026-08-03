@@ -21,7 +21,7 @@ Layouts follow the REAL il2cpp metadata structures (GlobalMetadataFileInternals.
 
 Usage:
     python3 make_test_metadata.py
-    python3 il2cpp_meta_dumper.py -i sample_xor.dat --xor-key <printed key> -o dump.txt
+    python3 dump_metadata.py -i sample_xor.dat --xor-key <printed key> -o dump.txt
 """
 
 import struct
@@ -29,7 +29,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from il2cpp_meta_dumper import MAGIC, header_fields
+from dump_metadata import MAGIC, header_fields
 
 VERSION = 31
 KEY = bytes.fromhex("00112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f")
@@ -201,7 +201,7 @@ def main():
     plain = build("Assembly-CSharp")
 
     # sanity check the plain file parses
-    from il2cpp_meta_dumper import Metadata
+    from dump_metadata import Metadata
     meta = Metadata(plain)
     assert meta.version == VERSION
     assert len(meta.type_defs) == 3

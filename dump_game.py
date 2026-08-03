@@ -18,9 +18,9 @@ scanning the binary's data segments for encoded tokens (EncodedMethodIndex:
 top 3 bits = usage kind, LSB = 1).
 
 Usage:
-    python3 il2cpp_bin_dumper.py -g game.apk -o outdir/          # auto-discover from APK/AAB/XAPK
-    python3 il2cpp_bin_dumper.py -g game/ -o outdir/             # or an extracted game directory
-    python3 il2cpp_bin_dumper.py -b libil2cpp.so -m global-metadata.dat -o outdir/   # explicit pair
+    python3 dump_game.py -g game.apk -o outdir/          # auto-discover from APK/AAB/XAPK
+    python3 dump_game.py -g game/ -o outdir/             # or an extracted game directory
+    python3 dump_game.py -b libil2cpp.so -m global-metadata.dat -o outdir/   # explicit pair
 
 When several ABIs are present inside the game package, arm64-v8a (64-bit) is
 preferred over armeabi-v7a (32-bit); a lone candidate is used as-is.
@@ -35,7 +35,7 @@ import tempfile
 import zipfile
 from typing import Dict, List, Optional, Tuple
 
-from il2cpp_meta_dumper import Metadata, method_def_size, type_def_size
+from dump_metadata import Metadata, method_def_size, type_def_size
 
 # --------------------------------------------------------------------------
 # Version-gated struct layouts (Il2CppClass.cs). Spec: (name, kind, [(min,max)])
@@ -1916,7 +1916,7 @@ def main() -> int:
 
 
 def _run(args, binary_path: str, metadata_path: str) -> int:
-    from il2cpp_meta_dumper import Metadata, MetaError, auto_xor_key, xor_decrypt
+    from dump_metadata import Metadata, MetaError, auto_xor_key, xor_decrypt
     with open(metadata_path, "rb") as f:
         mraw = f.read()
     key = None

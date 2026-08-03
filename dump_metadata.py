@@ -13,8 +13,8 @@ XOR-protected metadata:
     the key, matching the scheme used by the common Il2CppDumper XOR forks.
 
 Usage:
-    python3 il2cpp_meta_dumper.py -i global-metadata.dat
-    python3 il2cpp_meta_dumper.py -i global-metadata.dat --xor-key 4b6d4f... -o dump.txt
+    python3 dump_metadata.py -i global-metadata.dat
+    python3 dump_metadata.py -i global-metadata.dat --xor-key 4b6d4f... -o dump.txt
 """
 
 import argparse
