@@ -547,18 +547,24 @@ class SectionHelper:
         self.type_defs_count = type_defs_count
         self.image_count = image_count
         self._ref_index: Optional[Dict[int, List[int]]] = None
+        self._progress = None  # optional callable(frac) for scan progress
 
     def find_reference(self, addr: int) -> List[int]:
         if self._ref_index is None:
             idx: Dict[int, List[int]] = {}
             ptr = self.bin.ptr
             fmt = "Q" if ptr == 8 else "I"
+            total_bytes = sum(end - off for off, end in self.bin.data_scan_ranges())
+            done = 0
             for off, end in self.bin.data_scan_ranges():
                 for pos in range(off, max(off, end - ptr), ptr):
                     if pos + ptr > end:
                         break
                     v = struct.unpack_from("<" + fmt, self.bin.data, pos)[0]
                     idx.setdefault(v, []).append(self.bin.map_off_to_va(pos))
+                if self._progress and total_bytes:
+                    done += end - off
+                    self._progress(done / total_bytes)
             self._ref_index = idx
         return self._ref_index.get(addr, [])
 
@@ -1958,14 +1964,30 @@ def _run(args, binary_path: str, metadata_path: str) -> int:
     if not (code_reg and meta_reg):
         print("[*] symbol search failed, running section scan...")
         sh = SectionHelper(bin, version, len(meta.methods), len(meta.type_defs), len(meta.images))
+        last_pct = -5
+
+        def _progress(frac):
+            nonlocal last_pct
+            pct = int(frac * 100)
+            if pct >= last_pct + 5:
+                last_pct = pct
+                print("[*] scanning binary for registrations... %d%%" % pct, end="\r", flush=True)
+
+        sh._progress = _progress
         code_reg = sh.find_code_registration()
         meta_reg = sh.find_metadata_registration()
+        print(" " * 60, end="\r")
         if code_reg and meta_reg:
             found_by_scan = True
             print("[+] scan: CodeRegistration=0x%x MetadataRegistration=0x%x"
                   % (code_reg, meta_reg))
     if not (code_reg and meta_reg):
         print("error: could not locate registrations", file=sys.stderr)
+        print("  the binary may be protected/stripped. Try:", file=sys.stderr)
+        print("    - a memory dump of the running game (LIKEY etc.):", file=sys.stderr)
+        print("        python3 dump_memory.py --package <game> --dump-binary", file=sys.stderr)
+        print("    - forcing the version:  --version <n>", file=sys.stderr)
+        print("    - explicit -b/-m if the pair was auto-discovered wrong", file=sys.stderr)
         return 1
 
     # Version-correction heuristics apply to the scan path only (matches

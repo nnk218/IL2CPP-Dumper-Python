@@ -1177,11 +1177,27 @@ def main() -> int:
         if key:
             print("error: %s" % e, file=sys.stderr)
         else:
-            print("error: %s" % e, file=sys.stderr)
-            print("hint: if this file is protected, recover the XOR key from the game binary",
-                  file=sys.stderr)
-            print("      and retry with: --xor-key <hex>", file=sys.stderr)
-        return 1
+            # try auto-detecting a repeating-XOR protection key
+            auto = auto_xor_key(raw)
+            if auto:
+                decrypted = xor_decrypt(raw, auto, args.xor_offset)
+                protected = True
+                print("[+] auto-detected XOR key: %s" % auto.hex())
+                try:
+                    meta = Metadata(decrypted, version=args.version,
+                                    type_region_offset=args.type_region_offset)
+                except MetaError:
+                    print("error: %s" % e, file=sys.stderr)
+                    return 1
+            else:
+                print("error: %s" % e, file=sys.stderr)
+                print("hint: if this file is protected, recover the XOR key from the game binary",
+                      file=sys.stderr)
+                print("      and retry with: --xor-key <hex>", file=sys.stderr)
+                print("      or, for custom-encrypted games (e.g. 'LIKEY'), use:",
+                      file=sys.stderr)
+                print("      python3 dump_memory.py --package <game> --dump-binary", file=sys.stderr)
+                return 1
 
     text = meta.render_text(include_strings=args.strings)
     if protected:
