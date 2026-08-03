@@ -149,6 +149,27 @@ If auto-detection picks the wrong version:
 python3 dump_game.py -b libil2cpp.so -m global-metadata.dat --version 39 -o out/
 ```
 
+### Annotating a disassembler (IDA / Ghidra)
+
+After dumping, you can apply names/comments to the disassembly so functions show
+their C# names (`MonoBehaviour.IsInvoking` instead of `sub_6A41384`).
+
+**IDA** — open `libil2cpp.so` in IDA, then `File > Script file...` and pick
+`ida_annotate.py`. It prompts for your `script.json`.
+
+**Ghidra** — import the binary, then `Window > Script Manager` → add this
+repo's folder (green `+`) → run `ghidra_annotate.py`. It prompts for
+`script.json`.
+
+Both scripts:
+- create functions at every address in `Addresses`
+- rename every method to `Class$$method`
+- label string literals `StringLiteral_N` with the value as a comment
+- label type infos / metadata-method slots with names + comments
+
+> The binary must be loaded with the same image base the dump used (for ELF
+> that is normally the file's load base, so the raw addresses match).
+
 ---
 
 ## All command-line options
@@ -233,6 +254,8 @@ dump_game.py            Main dumper: APK discovery, registration search, script.
 dump_metadata.py        Standalone global-metadata.dat parser/renderer
 dump_memory.py          Rooted-device memory dumper (LIKEY / custom-encrypted games)
 likey_dump.py           (legacy) Frida-based metadata scanner
+ida_annotate.py         Apply names/comments to an IDA database from script.json
+ghidra_annotate.py      Apply names/comments to a Ghidra program from script.json
 make_test_elf.py        Synthetic ELF fixture generator (tests)
 make_test_metadata.py   Synthetic metadata fixture generator (tests)
 run_sweep.py            Regression test runner
