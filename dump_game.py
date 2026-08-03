@@ -1895,6 +1895,8 @@ def main() -> int:
                     help="repeating XOR key (hex) to decrypt protected metadata")
     ap.add_argument("--dump-cs", action="store_true",
                     help="also write a human-readable dump.cs")
+    ap.add_argument("--version-only", action="store_true",
+                    help="just print the metadata version and exit (quick sample check)")
     args = ap.parse_args()
 
     cleanup_dir = None
@@ -1946,6 +1948,10 @@ def _run(args, binary_path: str, metadata_path: str) -> int:
                 return 1
     meta = Metadata(mraw)
     version = args.version if args.version is not None else float(meta.version)
+
+    if args.version_only:
+        print("metadata version: %d" % meta.version)
+        return 0
 
     try:
         bin = load_binary(binary_path)
