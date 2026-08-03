@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "il2cpp-dumper-python"
+version = "1.0.0"
+description = "Dump Unity IL2CPP games: extract methods/types/strings from libil2cpp.so + global-metadata.dat"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "nnk218" }]
+keywords = ["il2cpp", "unity", "reverse-engineering", "dump", "android"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Disassemblers",
+]
+
+[project.scripts]
+dump-game = "dump_game:main"
+dump-metadata = "dump_metadata:main"
+dump-memory = "dump_memory:main"
+
+[tool.setuptools]
+py-modules = [
+    "dump_game",
+    "dump_metadata",
+    "dump_memory",
+]

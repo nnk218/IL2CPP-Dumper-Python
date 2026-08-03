@@ -32,3 +32,8 @@ libil2cpp_scan_test32.so
 # Protect scanned memory dumps (large, game-specific)
 *.memorydump.so
 global-metadata.decrypted.*.dat
+
+# Packaging artifacts
+build/
+dist/
+*.egg-info/
