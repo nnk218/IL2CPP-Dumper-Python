@@ -2151,11 +2151,231 @@ class DumpCsGenerator:
         v, _ = read_compressed_int(self._blob, pos)
         return v
 
+    # ------------------------------------------------------------------
+    # DummyDll: compilable C# stubs per assembly (--dummy-dll)
+    # ------------------------------------------------------------------
+
+    def _dummy_dll_type(self, td_idx: int, image_name: str, cfg: dict) -> Optional[
+            Dict[str, List[str]]]:
+        meta = self.meta; ctx = self.ctx
+        td = meta.type_defs[td_idx]
+        flags = td.get("flags", 0)
+        is_value_type = (td.get("bitfield", 0) & 0x1) == 1
+        is_enum = ((td.get("bitfield", 0) >> 1) & 0x1) == 1
+        # skip nested-private types (unused outside their declaring type; the
+        # reference excludes them as well)
+        if not is_enum and not (flags & TA_INTERFACE) and (flags & TA_VISIBILITY_MASK & 7) in (TA_NESTED_PRIVATE,
+            TA_NESTED_ASSEMBLY, TA_NESTED_FAMILY, TA_NESTED_FAM_AND_ASSEM):
+            return None
+
+        ns = meta.read_string(td.get("namespaceIndex", -1)) or "_"
+        L: List[str] = []
+
+        if cfg.get("DumpAttribute"):
+            for a in self._type_attributes(td_idx):
+                L.append("\t" + a + "\n")
+
+        extends: List[str] = []
+        parent = td.get("parentIndex", -1)
+        if parent >= 0 and 0 <= parent < len(ctx.types):
+            pname = ctx.type_name(ctx.types[parent], short_names=True, add_namespace=False)
+            if not is_value_type and not is_enum and pname != "object":
+                extends.append(pname)
+        if td.get("interfaces_count", 0) > 0:
+            ts = meta._idx_sizes.get("T", 4)
+            stride = (ts + 4) // ts
+            for i in range(td["interfaces_count"]):
+                fi = stride * i
+                if 0 <= fi < len(meta.interfaces):
+                    ti = meta.interfaces[fi]
+                    if 0 <= ti < len(ctx.types):
+                        iname = ctx.type_name(ctx.types[ti], short_names=True, add_namespace=False)
+                        if iname != "object":
+                            extends.append(iname)
+
+        visibility = _type_visibility(flags)
+        if flags & TA_INTERFACE:
+            kind = "interface"
+        elif is_enum:
+            kind = "enum"
+        elif is_value_type:
+            kind = "struct"
+        else:
+            kind = "class"
+        type_name = ctx.type_def_name(td_idx, short_names=True, add_namespace=False)
+        if td.get("genericContainerIndex", -1) >= 0:
+            type_name += self._generic_container_params(td["genericContainerIndex"])
+        L.append("\t%s%s %s" % (visibility, kind, type_name))
+        if extends:
+            L[-1] += " : " + ", ".join(extends)
+        L[-1] += "\n"
+        L.append("\t{\n")
+
+        # fields
+        fstart = td.get("fieldStart", 0); fcount = td.get("field_count", 0)
+        if is_enum:
+            for fi in range(fstart, min(fstart + fcount, len(meta.fields))):
+                fn = meta.read_string(meta.fields[fi].get("nameIndex", -1))
+                if fn == "value__":
+                    continue
+                dv = self._field_default_value(fi)
+                val_str = ""
+                if dv is not None and dv[0] is not None:
+                    val_str = " = %s" % self._render_value(dv[0])
+                L.append("\t\t%s%s,\n" % (fn, val_str))
+        else:
+            for fi in range(fstart, min(fstart + fcount, len(meta.fields))):
+                fd = meta.fields[fi]
+                ft = ctx.types[fd.get("typeIndex", -1)] if 0 <= fd.get("typeIndex", -1) < len(ctx.types) else None
+                ftn = ctx.type_name(ft, short_names=True, add_namespace=False) if ft else "?"
+                fn = meta.read_string(fd.get("nameIndex", -1))
+                attrs = ft.attrs if ft else 0
+                mods = _field_modifiers(attrs)
+                is_const = (attrs & FA_LITERAL) != 0
+                if cfg.get("DumpAttribute"):
+                    for a in self._custom_attributes(image_name, fd.get("customAttributeIndex", -1), fd.get("token", 0)):
+                        if a: L.append("\t\t" + a + "\n")
+                if is_const:
+                    dv = self._field_default_value(fi)
+                    if dv is not None and dv[0] is not None:
+                        L.append("\t\t%s %s = %s;\n" % (mods, ftn, fn, self._render_value(dv[0])))
+                        continue
+                L.append("\t\t%s%s %s;\n" % (mods, ftn, fn))
+
+        # properties (skip for enums and interfaces)
+        if not is_enum and not (flags & TA_INTERFACE):
+            pstart = td.get("propertyStart", 0); pcount = td.get("property_count", 0)
+            for pi in range(pstart, min(pstart + pcount, len(meta.properties))):
+                pd = meta.properties[pi]
+                mods = ""; ptype = "void"
+                if pd.get("get", -1) >= 0:
+                    mi = td.get("methodStart", 0) + pd["get"]
+                    if 0 <= mi < len(meta.methods):
+                        md = meta.methods[mi]; mods = _method_modifiers(md.get("flags", 0))
+                        rt = ctx.types[md.get("returnType", -1)] if 0 <= md.get("returnType", -1) < len(ctx.types) else None
+                        ptype = ctx.type_name(rt, short_names=True, add_namespace=False) if rt else "void"
+                elif pd.get("set", -1) >= 0:
+                    mi = td.get("methodStart", 0) + pd["set"]
+                    if 0 <= mi < len(meta.methods):
+                        md = meta.methods[mi]; mods = _method_modifiers(md.get("flags", 0))
+                        ps = md.get("parameterStart", 0)
+                        if ps < len(meta.params):
+                            pt = ctx.types[meta.params[ps].get("typeIndex", -1)] if 0 <= meta.params[ps].get("typeIndex", -1) < len(ctx.types) else None
+                            ptype = ctx.type_name(pt, short_names=True, add_namespace=False) if pt else "void"
+                pn = meta.read_string(pd.get("nameIndex", -1))
+                if cfg.get("DumpAttribute"):
+                    for a in self._custom_attributes(image_name, pd.get("customAttributeIndex", -1), pd.get("token", 0)):
+                        if a: L.append("\t\t" + a + "\n")
+                L.append("\t\t%s%s %s { " % (mods, ptype, pn))
+                if pd.get("get", -1) >= 0: L.append("get { throw null; } ")
+                if pd.get("set", -1) >= 0: L.append("set { throw null; } ")
+                L.append("}\n")
+
+        # events
+        if not is_enum and not (flags & TA_INTERFACE) and cfg.get("DumpEvent"):
+            estart = td.get("eventStart", 0); ecount = td.get("event_count", 0)
+            for ei in range(estart, min(estart + ecount, len(meta.events))):
+                ed = meta.events[ei]
+                et = ctx.types[ed.get("typeIndex", -1)] if 0 <= ed.get("typeIndex", -1) < len(ctx.types) else None
+                etn = ctx.type_name(et, short_names=True, add_namespace=False) if et else "Action"
+                en = meta.read_string(ed.get("nameIndex", -1))
+                for a in self._custom_attributes(image_name, ed.get("customAttributeIndex", -1), ed.get("token", 0)):
+                    if a: L.append("\t\t" + a + "\n")
+                L.append("\t\tevent %s %s;\n" % (etn, en))
+
+        # methods (skip for enums; interface methods are already abstract)
+        if not is_enum:
+            mstart = td.get("methodStart", 0); mcount = td.get("method_count", 0)
+            for mi in range(mstart, min(mstart + mcount, len(meta.methods))):
+                md = meta.methods[mi]
+                mods = _method_modifiers(md.get("flags", 0))
+                mn = meta.read_string(md.get("nameIndex", -1))
+                if not mn or mn.startswith(".cctor"):
+                    continue
+                gci = md.get("genericContainerIndex", -1)
+                if gci >= 0: mn += self._generic_container_params(gci)
+                rt = ctx.types[md.get("returnType", -1)] if 0 <= md.get("returnType", -1) < len(ctx.types) else None
+                rn = ctx.type_name(rt, short_names=True, add_namespace=False) if rt else "void"
+                params = self._method_params(md)
+                is_abstract = (md.get("flags", 0) & MA_ABSTRACT) != 0 or bool(flags & TA_INTERFACE)
+                if cfg.get("DumpAttribute"):
+                    for a in self._custom_attributes(image_name, md.get("customAttributeIndex", -1), md.get("token", 0)):
+                        if a: L.append("\t\t" + a + "\n")
+                if is_abstract:
+                    L.append("\t\t%s%s %s(%s);\n" % (mods, rn, mn, ", ".join(params)))
+                else:
+                    L.append("\t\t%s%s %s(%s) { throw null; }\n" % (mods, rn, mn, ", ".join(params)))
+
+        L.append("\t}\n")
+        return {ns: L}
+
 
 def generate_dump_cs(ctx: Il2CppContext, bin: Binary, meta: Metadata, version: float,
                      config: Optional[Dict] = None) -> str:
     gen = DumpCsGenerator(ctx, bin, meta, version)
     return gen.generate(config)
+
+
+def generate_dummy_dll(ctx: Il2CppContext, bin: Binary, meta: Metadata, version: float,
+                       output_dir: str, dump_attributes: bool = False,
+                       dump_events: bool = False):
+    """Generate per-assembly compilable C# stub files (DummyDll).
+    One .cs file per image/assembly — types have stub method bodies (throw null),
+    so they compile and give IDE intellisense without linked native code."""
+    import os
+    cfg = {"DumpAttribute": dump_attributes, "DumpEvent": dump_events}
+    gen = DumpCsGenerator(ctx, bin, meta, version)
+
+    os.makedirs(output_dir, exist_ok=True)
+    for img_idx, img in enumerate(meta.images):
+        iname = meta.read_string(img.get("nameIndex", -1))
+        type_start = img.get("typeStart", 0)
+        type_count = img.get("typeCount", 0)
+        if type_count <= 0:
+            continue
+
+        type_writers: dict = {}  # namespace -> list of source lines
+        uses: set = set()
+        for td_idx in range(type_start, min(type_start + type_count, len(meta.type_defs))):
+            try:
+                src = gen._dummy_dll_type(td_idx, iname, cfg)
+                if not src:
+                    continue
+                for ns, lines in src.items():
+                    if ns not in type_writers:
+                        type_writers[ns] = []
+                    type_writers[ns].extend(lines)
+                td = meta.type_defs[td_idx]
+                ns = meta.read_string(td.get("namespaceIndex", -1))
+                if ns and _needs_using(gen, td_idx):
+                    uses.add(ns)
+            except Exception:
+                continue
+        if not type_writers:
+            continue
+
+        fname = os.path.join(output_dir, _safe_filename(iname.replace(".dll", "")) + ".cs")
+        with open(fname, "w", encoding="utf-8") as f:
+            f.write("// Assembly: %s\n" % iname)
+            for u in sorted(uses):
+                f.write("using %s;\n" % u)
+            if uses:
+                f.write("\n")
+            for ns, lines in sorted(type_writers.items()):
+                f.write("namespace %s\n{\n" % (ns or ""))
+                f.write("".join(lines))
+                f.write("}\n")
+        print("[+] wrote %s (%d types, %d namespaces)" % (fname, sum(len(v) for v in type_writers.values()), len(type_writers)))
+
+
+def _needs_using(gen, td_idx: int) -> bool:
+    """Check if any method parameter references a type from a different namespace
+    (simplistic — just check if the type references non-primitive types)."""
+    return False  # simplified: skip using generation for now
+
+
+def _safe_filename(name: str) -> str:
+    return "".join(c if c.isalnum() or c in "._-" else "_" for c in name)
 
 
 def scan_metadata_usage(ctx: Il2CppContext, bin: Binary, meta: Metadata, json_out: Dict,
@@ -2573,6 +2793,9 @@ def main() -> int:
                          "([Attr(...)] lines) on types/members")
     ap.add_argument("--dump-events", action="store_true",
                     help="with --dump-cs, render events (add/remove/raise)")
+    ap.add_argument("--dummy-dll", metavar="DIR",
+                    help="generate compilable per-assembly C# stubs into DIR "
+                         "(methods have throw-null bodies, usable for IDE intellisense)")
     ap.add_argument("--version-only", action="store_true",
                     help="just print the metadata version and exit (quick sample check)")
     ap.add_argument("--device", action="store_true",
@@ -2735,6 +2958,11 @@ def _run(args, binary_path: str, metadata_path: str) -> int:
         with open(os.path.join(args.output, "dump.cs"), "w", encoding="utf-8") as f:
             f.write(cs)
         print("[+] wrote %s (%d bytes)" % (os.path.join(args.output, "dump.cs"), len(cs)))
+    if args.dummy_dll:
+        ddir = args.dummy_dll
+        da = bool(getattr(args, "dump_attributes", False))
+        de = bool(getattr(args, "dump_events", False))
+        generate_dummy_dll(ctx, bin, meta, version, ddir, da, de)
     print("[+] wrote %s (methods=%d, strings=%d, metadata=%d, metaMethods=%d, addresses=%d)"
           % (spath, len(json_out["ScriptMethod"]), len(json_out["ScriptString"]),
              len(json_out["ScriptMetadata"]), len(json_out["ScriptMetadataMethod"]),
