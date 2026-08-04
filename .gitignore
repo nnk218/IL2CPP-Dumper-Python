@@ -65,3 +65,8 @@ global-metadata.decrypted.*.dat
 build/
 dist/
 *.egg-info/
+
+# Experimental scripts: keep source, ignore any generated output
+experimental/*
+!experimental/README.md
+!experimental/*.py
