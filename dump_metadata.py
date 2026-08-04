@@ -374,6 +374,10 @@ class Metadata:
         self.param_defaults: List[Dict] = []
         self.usage_lists: List[List[int]] = []
         self.usage_pairs: List[Dict] = []
+        self.attribute_data_ranges: List[Dict] = []
+        self.attribute_type_ranges: List[Dict] = []
+        self.attribute_types: List[int] = []
+        self.attr_token_to_index: Dict[Tuple[int, int], int] = {}
 
         self.byval_to_name: Dict[int, str] = {}
         self.byref_to_name: Dict[int, str] = {}
@@ -419,6 +423,7 @@ class Metadata:
             return {
                 "stringLiteral": "stringLiterals",
                 "string": "strings",
+                "attributeDataRange": "attributeDataRanges",
             }.get(table, table)
         return table
 
@@ -538,6 +543,25 @@ class Metadata:
             return self.data[pos:end].decode("utf-8", "replace")
         except Exception:
             return ""
+
+    def read_all_strings(self) -> List[str]:
+        """Iterate all null-terminated strings from the metadata strings section."""
+        out = []
+        base = self._sec_off("string")
+        size = self._sec_size("string")
+        if base <= 0 or size <= 0:
+            return out
+        blob = self.data[base: base + size]
+        start = 0
+        while start < len(blob):
+            end = blob.find(b"\x00", start)
+            if end == -1:
+                out.append(blob[start:].decode("utf-8", "replace"))
+                break
+            if end > start:
+                out.append(blob[start:end].decode("utf-8", "replace"))
+            start = end + 1
+        return out
 
     # -- parsers ----------------------------------------------------------
     def _parse(self):
@@ -720,6 +744,41 @@ class Metadata:
                 break
             self.events.append(dict(zip(e_names, rec)))
 
+        # custom attributes (opt-in; used by DumpCsGenerator --dump-attributes)
+        # v29+: Il2CppCustomAttributeDataRange { token, startOffset }
+        # v<29: Il2CppCustomAttributeTypeRange { token, start, count } + attributeTypes
+        adro = self._tab_off("attributeDataRange")
+        adrc = self._count("attributeDataRange")
+        if adro > 0 and adrc > 0:
+            for i in range(adrc):
+                rec = self._rd("iI", adro + i * 8)
+                if rec is None:
+                    break
+                self.attribute_data_ranges.append(dict(zip(["token", "startOffset"], rec)))
+        else:
+            atro = self._tab_off("attributesInfo")
+            atrc = self._count("attributesInfo")
+            if atro > 0 and atrc > 0:
+                if v >= 24.1:
+                    a_fmt, a_size = "iII", 12
+                else:
+                    a_fmt, a_size = "iI", 8
+                for i in range(atrc):
+                    rec = self._rd(a_fmt, atro + i * a_size)
+                    if rec is None:
+                        break
+                    if len(rec) == 3:
+                        self.attribute_type_ranges.append(dict(zip(["token", "start", "count"], rec)))
+                    else:
+                        self.attribute_type_ranges.append(dict(zip(["token", "start", "count"] + [None], rec)))
+                ato = self._tab_off("attributeTypes")
+                atc = self._count("attributeTypes")
+                for i in range(atc):
+                    rec = self._rd("i", ato + i * 4)
+                    if rec is None:
+                        break
+                    self.attribute_types.append(rec[0])
+
         # generic parameters
         gpo = self._tab_off("genericParameters")
         gpc = self._count("genericParameters")
@@ -809,6 +868,24 @@ class Metadata:
                 if rec is None:
                     break
                 self.images.append(dict(zip(im_names, rec)))
+
+        # token -> attribute index, per image (matches GetCustomAttributeIndex);
+        # needs images parsed, so it runs here after the images block.
+        if v > 24:
+            for img in self.images:
+                start = img.get("customAttributeStart", 0)
+                count = img.get("customAttributeCount", 0)
+                for i in range(start, start + count):
+                    if i < len(self.attribute_data_ranges):
+                        tok = self.attribute_data_ranges[i].get("token", 0)
+                    elif i < len(self.attribute_type_ranges):
+                        tok = self.attribute_type_ranges[i].get("token", 0)
+                    else:
+                        continue
+                    self.attr_token_to_index[(img.get("token", 0), tok)] = i
+        elif self.attribute_type_ranges:
+            # v<=24.1: customAttributeIndex is used directly as the index
+            self.attr_token_to_index = None  # marker: use index directly
 
         # assemblies (v38+ includes moduleToken + full Il2CppAssemblyNameDefinition)
         ao = self._tab_off("assemblies")

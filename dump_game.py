@@ -29,7 +29,9 @@ preferred over armeabi-v7a (32-bit); a lone candidate is used as-is.
 import argparse
 import json
 import os
+import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -1433,12 +1435,21 @@ class DumpCsGenerator:
         self.bin = bin
         self.meta = meta
         self.version = version
+        # caches for the attribute/event lookups (avoid re-scanning images)
+        self._type_to_image: List[int] = []
+        for img in meta.images:
+            ts = img.get("typeStart", 0)
+            tc = img.get("typeCount", 0)
+            self._type_to_image.extend([img.get("token", 0)] * tc)
+        self._image_token_by_name: Dict[str, int] = {}
+        for img in meta.images:
+            self._image_token_by_name[meta.read_string(img.get("nameIndex", -1))] = img.get("token", 0)
 
     def generate(self, config: Optional[Dict] = None) -> str:
         cfg = {
             "DumpMethod": True, "DumpField": True, "DumpProperty": True,
             "DumpAttribute": False, "DumpFieldOffset": True, "DumpMethodOffset": True,
-            "DumpTypeDefIndex": True,
+            "DumpTypeDefIndex": True, "DumpEvent": False,
         }
         if config:
             cfg.update(config)
@@ -1520,9 +1531,17 @@ class DumpCsGenerator:
             header += " : " + ", ".join(extends)
         if cfg["DumpTypeDefIndex"]:
             header += " // TypeDefIndex: %d" % td_idx
+        # attributes on the type itself
+        attr_lines = []
+        if cfg["DumpAttribute"]:
+            attr_lines = self._type_attributes(td_idx)
         has_content = (cfg["DumpField"] and td.get("field_count", 0) > 0) or \
                       (cfg["DumpProperty"] and td.get("property_count", 0) > 0) or \
-                      (cfg["DumpMethod"] and td.get("method_count", 0) > 0)
+                      (cfg["DumpMethod"] and td.get("method_count", 0) > 0) or \
+                      (cfg["DumpEvent"] and td.get("event_count", 0) > 0) or \
+                      bool(attr_lines)
+        for a in attr_lines:
+            L.append(a)
         if not has_content:
             L.append(header)
             L.append("{}")
@@ -1543,6 +1562,10 @@ class DumpCsGenerator:
                 attrs = ft.attrs if ft else 0
                 is_const = (attrs & FA_LITERAL) != 0
                 is_static = (attrs & FA_STATIC) != 0
+                if cfg["DumpAttribute"]:
+                    for a in self._custom_attributes(image_name, fd.get("customAttributeIndex", -1), fd.get("token", 0)):
+                        if a:
+                            L.append("\t" + a)
                 line = "\t%s%s %s" % (_field_modifiers(attrs), ftype_name, fname)
                 # default value: decoded literal for scalars, or a metadata-offset
                 # comment for array/blob/unknown types (matches reference; the
@@ -1566,6 +1589,10 @@ class DumpCsGenerator:
             L.append("\t// Properties")
             for pi in range(pstart, min(pstart + pcount, len(meta.properties))):
                 pd = meta.properties[pi]
+                if cfg["DumpAttribute"]:
+                    for a in self._custom_attributes(image_name, pd.get("customAttributeIndex", -1), pd.get("token", 0)):
+                        if a:
+                            L.append("\t" + a)
                 line = "\t"
                 if pd.get("get", -1) >= 0:
                     m_idx = td.get("methodStart", 0) + pd["get"]
@@ -1592,6 +1619,24 @@ class DumpCsGenerator:
                 line += "}"
                 L.append(line)
 
+        # events
+        estart = td.get("eventStart", 0)
+        ecount = td.get("event_count", 0)
+        if cfg["DumpEvent"] and ecount > 0:
+            L.append("\t// Events")
+            for ei in range(estart, min(estart + ecount, len(meta.events))):
+                ed = meta.events[ei]
+                et = ctx.types[ed.get("typeIndex", -1)] if 0 <= ed.get("typeIndex", -1) < len(ctx.types) else None
+                et_name = ctx.type_name(et, short_names=True, add_namespace=False) if et else "<unknown>"
+                ename = meta.read_string(ed.get("nameIndex", -1))
+                evt_attr = ""
+                if cfg["DumpAttribute"]:
+                    evt_attr = "".join(self._custom_attributes(image_name, ed.get("customAttributeIndex", -1), ed.get("token", 0)))
+                for a in (evt_attr.splitlines() or []):
+                    if a:
+                        L.append("\t" + a)
+                L.append("\tevent %s %s;" % (et_name, ename))
+
         # methods
         mstart = td.get("methodStart", 0)
         mcount = td.get("method_count", 0)
@@ -1601,6 +1646,8 @@ class DumpCsGenerator:
                 md = meta.methods[mi]
                 is_abstract = (md.get("flags", 0) & MA_ABSTRACT) != 0
                 L.append("")
+                if cfg["DumpAttribute"]:
+                    L.extend("\t" + a for a in self._custom_attributes(image_name, md.get("customAttributeIndex", -1), md.get("token", 0)) if a)
                 if cfg["DumpMethodOffset"]:
                     mp = ctx.get_method_pointer(image_name, md)
                     if not is_abstract and mp > 0:
@@ -1812,6 +1859,297 @@ class DumpCsGenerator:
         for c in s:
             out.append(table.get(c, c))
         return "".join(out)
+
+    # ------------------------------------------------------------------
+    # Custom attributes (--dump-attributes). Mirrors the reference:
+    #   v<29: attributeTypeRanges + attributeTypes (+ generator RVA if available)
+    #   v29+: attributeDataRanges + blob parsed by CustomAttributeDataReader
+    # ------------------------------------------------------------------
+
+    def _image_custom_attribute_index(self, image_name: str, custom_attribute_index: int, token: int) -> int:
+        meta = self.meta
+        if meta.attr_token_to_index is None:
+            # v<=24.1: the index is used directly
+            return custom_attribute_index
+        img_token = self._image_token_by_name.get(image_name)
+        if img_token is None:
+            return -1
+        return meta.attr_token_to_index.get((img_token, token), -1)
+
+    def _custom_attributes(self, image_name: str, custom_attribute_index: int, token: int) -> List[str]:
+        """Return rendered `[Attr(...)]` lines for a member, or [] if none."""
+        meta = self.meta
+        if self.version < 21:
+            return []
+        ai = self._image_custom_attribute_index(image_name, custom_attribute_index, token)
+        if ai < 0:
+            return []
+        if self.version < 29:
+            return self._attributes_v_lt_29(image_name, ai)
+        return self._attributes_v29(ai)
+
+    def _type_attributes(self, td_idx: int) -> List[str]:
+        meta = self.meta
+        td = meta.type_defs[td_idx] if 0 <= td_idx < len(meta.type_defs) else None
+        if td is None:
+            return []
+        image_name = self._type_image_name(td_idx)
+        return self._custom_attributes(image_name, td.get("customAttributeIndex", -1), td.get("token", 0))
+    def _type_image_name(self, td_idx: int) -> str:
+        meta = self.meta
+        if 0 <= td_idx < len(self._type_to_image):
+            tok = self._type_to_image[td_idx]
+            for img in meta.images:
+                if img.get("token", 0) == tok:
+                    return meta.read_string(img.get("nameIndex", -1))
+        return ""
+
+    def _type_image_token(self, td_idx: int) -> int:
+        if 0 <= td_idx < len(self._type_to_image):
+            return self._type_to_image[td_idx]
+        return 0
+
+    def _attributes_v_lt_29(self, image_name: str, ai: int) -> List[str]:
+        """v<29: each attribute is a TypeIndex from attributeTypes; the reference
+        also prints the customAttributeGenerator RVA when available."""
+        meta = self.meta
+        if ai < 0 or ai >= len(meta.attribute_type_ranges):
+            return []
+        rng = meta.attribute_type_ranges[ai]
+        start = rng.get("start", 0)
+        count = rng.get("count", 0)
+        out = []
+        gen = self.ctx.custom_attribute_generators.get(ai, 0) if hasattr(self.ctx, "custom_attribute_generators") else 0
+        for i in range(start, min(start + count, len(meta.attribute_types))):
+            ti = meta.attribute_types[i]
+            if 0 <= ti < len(self.ctx.types):
+                tname = self.ctx.type_name(self.ctx.types[ti], short_names=True, add_namespace=False)
+                if gen:
+                    rva = self.bin.get_rva(gen)
+                    off = self.bin.map_va_to_off(gen) or 0
+                    out.append("[%s] // RVA: 0x%X Offset: 0x%X VA: 0x%X" % (tname, rva, off, gen))
+                else:
+                    out.append("[%s]" % tname)
+        return out
+
+    def _attributes_v29(self, ai: int) -> List[str]:
+        """v29+: parse the CustomAttribute blob and render [Type(...)]."""
+        meta = self.meta
+        ranges = meta.attribute_data_ranges
+        if ai < 0 or ai + 1 >= len(ranges):
+            return []
+        start_range = ranges[ai]
+        end_range = ranges[ai + 1]
+        base = meta._sec_off("attributeData")
+        s0 = start_range.get("startOffset", 0)
+        s1 = end_range.get("startOffset", 0)
+        if base <= 0 or s1 < s0 or base + s1 > len(meta.data):
+            return []
+        blob = meta.data[base + s0: base + s1]
+        return self._parse_attribute_blob(blob)
+
+    def _parse_attribute_blob(self, blob: bytes) -> List[str]:
+        """Parse a CustomAttributeData blob -> list of `[Type(args)]` strings.
+        Layout (matches the reference reader):
+          [Count: compressed][ctorIndex0..N: 4-byte each][data: per-attribute
+           argCount/fieldCount/propCount then values]"""
+        self._blob = blob
+        self._bpos = 0
+
+        try:
+            count = self._bru()
+            # ctor indices are 4-byte ints, NOT compressed
+            ctor_idx = []
+            for _ in range(count):
+                if self._bpos + 4 > len(blob):
+                    return []
+                ctor_idx.append(struct.unpack_from("<i", blob, self._bpos)[0])
+                self._bpos += 4
+            args = []
+            for ci in ctor_idx:
+                if ci >= len(self.meta.methods):
+                    continue
+                md = self.meta.methods[ci]
+                td_idx = md.get("declaringType", -1)
+                td = self.meta.type_defs[td_idx] if 0 <= td_idx < len(self.meta.type_defs) else None
+                if td is None:
+                    continue
+                type_name = self.meta.read_string(td.get("nameIndex", -1))
+                if type_name.endswith("Attribute"):
+                    type_name = type_name[:-len("Attribute")]
+                arg_count = self._bru()
+                field_count = self._bru()
+                prop_count = self._bru()
+                arg_list = []
+                for _ in range(arg_count):
+                    arg_list.append(self._attribute_blob_value())
+                for _ in range(field_count):
+                    val = self._attribute_blob_value()
+                    member_index = self._bri()
+                    fname = self._attr_member_name(td_idx, member_index, "field")
+                    arg_list.append("%s = %s" % (fname, val))
+                for _ in range(prop_count):
+                    val = self._attribute_blob_value()
+                    member_index = self._bri()
+                    pname = self._attr_member_name(td_idx, member_index, "property")
+                    arg_list.append("%s = %s" % (pname, val))
+                if arg_list:
+                    args.append("[%s(%s)]" % (type_name, ", ".join(arg_list)))
+                else:
+                    args.append("[%s]" % type_name)
+            return args
+        except Exception:
+            return []
+
+    def _attr_member_name(self, td_idx: int, member_index: int, kind: str) -> str:
+        meta = self.meta
+        if member_index >= 0 and 0 <= td_idx < len(meta.type_defs):
+            td = meta.type_defs[td_idx]
+            if kind == "field":
+                start = td.get("fieldStart", 0)
+                cnt = td.get("field_count", 0)
+                table = meta.fields
+            else:
+                start = td.get("propertyStart", 0)
+                cnt = td.get("property_count", 0)
+                table = meta.properties
+            if 0 <= start + member_index < start + cnt and start + member_index < len(table):
+                return meta.read_string(table[start + member_index].get("nameIndex", -1))
+        return "?"
+
+    def _bru(self) -> int:
+        v, self._bpos = read_compressed_uint(self._blob, self._bpos)
+        return v
+
+    def _bri(self) -> int:
+        v, self._bpos = read_compressed_int(self._blob, self._bpos)
+        return v
+
+    def _attribute_blob_value(self) -> str:
+        """Read one encoded value from the attribute blob and render it as a
+        C# literal. Matches Il2CppExecutor.ReadEncodedTypeEnum + GetConstantValueFromBlob."""
+        meta = self.meta
+        data = self._blob
+        pos = self._bpos
+        if pos >= len(data):
+            self._bpos = pos
+            return "null"
+        code = data[pos]
+        pos += 1
+        enum_name = None
+        if code == 0x55:  # IL2CPP_TYPE_ENUM
+            ei, pos = read_compressed_int(data, pos)
+            if 0 <= ei < len(meta.type_defs):
+                enum_name = meta.read_string(meta.type_defs[ei].get("nameIndex", -1))
+            code = data[pos]
+            pos += 1
+        self._bpos = pos
+
+        if code == 0x02:  # BOOLEAN
+            v = data[pos]; self._bpos = pos + 1
+            return "True" if v else "False"
+        if code == 0x05:  # U1
+            v = data[pos]; self._bpos = pos + 1
+            return str(v)
+        if code == 0x04:  # I1
+            v = struct.unpack_from("<b", data, pos)[0]; self._bpos = pos + 1
+            return str(v)
+        if code == 0x03:  # CHAR
+            v = struct.unpack_from("<H", data, pos)[0]; self._bpos = pos + 2
+            return "'\\x%x'" % v
+        if code == 0x07:  # U2
+            v = struct.unpack_from("<H", data, pos)[0]; self._bpos = pos + 2
+            return str(v)
+        if code == 0x06:  # I2
+            v = struct.unpack_from("<h", data, pos)[0]; self._bpos = pos + 2
+            return str(v)
+        if code == 0x09:  # U4 (compressed >= 29)
+            v, self._bpos = read_compressed_uint(data, pos)
+            return str(v)
+        if code == 0x08:  # I4 (compressed >= 29)
+            v, self._bpos = read_compressed_int(data, pos)
+            return str(v)
+        if code == 0x0B:  # U8
+            v = struct.unpack_from("<Q", data, pos)[0]; self._bpos = pos + 8
+            return str(v)
+        if code == 0x0A:  # I8
+            v = struct.unpack_from("<q", data, pos)[0]; self._bpos = pos + 8
+            return str(v)
+        if code == 0x0C:  # R4
+            v = struct.unpack_from("<f", data, pos)[0]; self._bpos = pos + 4
+            return repr(v)
+        if code == 0x0D:  # R8
+            v = struct.unpack_from("<d", data, pos)[0]; self._bpos = pos + 8
+            return repr(v)
+        if code == 0x0E:  # STRING
+            length, npos = read_compressed_int(data, pos)
+            self._bpos = npos
+            if length == -1:
+                return "null"
+            s = data[npos:npos + length].decode("utf-8", "replace")
+            self._bpos = npos + length
+            return '"%s"' % self._escape_string(s)
+        if code == 0x1D:  # SZARRAY (rare — skip detailed rendering to avoid complexity)
+            elem = data[pos]; pos += 1
+            arr_len, pos = read_compressed_uint(data, pos)
+            self._bpos = pos
+            for _ in range(min(arr_len, 256)):
+                self._bpos += 1  # skip element type byte
+                self._skip_attr_value()
+            return "new[] { ... }"
+        if code == 0x1C:  # IL2CPP_TYPE_INDEX (typeof())
+            ti, self._bpos = read_compressed_int(data, pos)
+            if ti == -1:
+                return "null"
+            if 0 <= ti < len(self.ctx.types):
+                return "typeof(%s)" % self.ctx.type_name(self.ctx.types[ti], short_names=True, add_namespace=False)
+            return "typeof(?)"
+        if enum_name:
+            return "%s" % enum_name
+        self._bpos = pos
+        return "null"
+
+    def _skip_attr_value(self):
+        """Advance past one encoded value without decoding it."""
+        data = self._blob
+        pos = self._bpos
+        if pos >= len(data):
+            return
+        code = data[pos]; pos += 1
+        if code == 0x55:
+            pos += self._bri_silent(pos)
+            if pos >= len(data):
+                self._bpos = pos; return
+            code = data[pos]; pos += 1
+        # scalars
+        if code in (0x02, 0x04, 0x05):  # bool, i1, u1
+            self._bpos = pos + 1
+        elif code in (0x03, 0x06, 0x07):  # char, i2, u2
+            self._bpos = pos + 2
+        elif code in (0x08, 0x09):  # i4, u4 (compressed)
+            _, self._bpos = read_compressed_uint(data, pos)
+        elif code in (0x0A, 0x0B):  # i8, u8
+            self._bpos = pos + 8
+        elif code in (0x0C, 0x0D):  # r4, r8
+            self._bpos = pos + (4 if code == 0x0C else 8)
+        elif code == 0x0E:  # STRING
+            length, npos = read_compressed_int(data, pos)
+            self._bpos = npos + (length if length >= 0 else 0)
+        elif code == 0x1C:  # IL2CPP_TYPE_INDEX
+            _, self._bpos = read_compressed_int(data, pos)
+        elif code == 0x1D:  # nested SZARRAY — skip
+            pos += 1
+            arr_len, pos = read_compressed_uint(data, pos)
+            self._bpos = pos
+            for _ in range(min(arr_len, 256)):
+                self._bpos += 1
+                self._skip_attr_value()
+        else:
+            self._bpos = pos
+
+    def _bri_silent(self, pos: int) -> int:
+        v, _ = read_compressed_int(self._blob, pos)
+        return v
 
 
 def generate_dump_cs(ctx: Il2CppContext, bin: Binary, meta: Metadata, version: float,
@@ -2026,10 +2364,11 @@ def _find_pair_in_zip(path: str, tmpdir: str, depth: int) -> Tuple[Optional[str]
 
     grab(path)
     if not (binary_candidates and metadata):
-        # recurse into nested apk/zip entries
+        # recurse into nested apk/zip entries (APKM/APKS/XAPK wrap APKs)
         with zipfile.ZipFile(path) as zf:
             nested = [e for e in zf.namelist()
-                      if e.lower().endswith((".apk", ".zip", ".aab", ".obb"))]
+                      if e.lower().endswith((".apk", ".zip", ".aab", ".obb",
+                                             ".apkm", ".apks", ".xapk"))]
         for entry in nested:
             inner_path = os.path.join(tmpdir, "inner_%d_%s" % (depth, os.path.basename(entry)))
             with zipfile.ZipFile(path) as zf:
@@ -2075,6 +2414,142 @@ def _abi_priority(entry: str) -> int:
     return 0  # no ABI hint: assume 64-bit is preferred (single-ABI case)
 
 
+# --------------------------------------------------------------------------
+# Device mode: pull libil2cpp.so + global-metadata.dat from a connected,
+# rooted Android device without manually extracting the APK first.
+# --------------------------------------------------------------------------
+
+def _find_adb(adb_override=None):
+    """Locate adb: --adb flag > ADB env var > PATH > common SDK locations."""
+    for cand in (adb_override, os.environ.get("ADB"), shutil.which("adb"),
+                 os.path.expanduser("~/Android/Sdk/platform-tools/adb"),
+                 os.path.expanduser("~/android-sdk/platform-tools/adb"),
+                 "/opt/android-sdk/platform-tools/adb",
+                 "/usr/lib/android-sdk/platform-tools/adb"):
+        if cand and os.path.exists(cand):
+            return cand
+    return None
+
+
+def _shell(adb, args, su=False):
+    """Run an adb shell command (optionally through su). Returns (rc, stdout)."""
+    if not su:
+        p = subprocess.run([adb, "shell", args], capture_output=True)
+        return p.returncode, p.stdout
+    for su_prefix in ("su -c", "su 0 -c", "su root -c"):
+        p = subprocess.run([adb, "shell", su_prefix, args], capture_output=True)
+        if p.returncode == 0 and p.stdout.strip():
+            return p.returncode, p.stdout
+    return p.returncode, p.stdout
+
+
+def _device_apk_paths(adb, package):
+    """Return the installed APK/split paths for a package via `pm path`."""
+    rc, out = _shell(adb, "pm path %s" % package)
+    paths = [line.split("package:", 1)[1].strip()
+             for line in out.decode("utf-8", "replace").splitlines()
+             if "package:" in line and line.split("package:", 1)[1].strip()]
+    return paths
+
+
+def _pull_file(adb, remote, local, su=False):
+    """Copy a device file to the PC. Plain `adb pull` first (works for
+    world-readable paths), then `su`-assisted `cat` as a fallback."""
+    if not su:
+        p = subprocess.run([adb, "pull", remote, local], capture_output=True)
+        if p.returncode == 0 and os.path.exists(local) and os.path.getsize(local) > 0:
+            return True
+    for su_prefix in ("su", "su 0", "su root"):
+        cmd = "%s -c 'cat %s'" % (su_prefix, remote)
+        p = subprocess.run([adb, "exec-out", cmd], capture_output=True)
+        if p.stdout:
+            with open(local, "wb") as f:
+                f.write(p.stdout)
+            return True
+    return False
+
+
+def discover_device(package: str, adb_override=None, tmpdir: Optional[str] = None) \
+        -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Pull a game's APK(s) from a connected rooted device and discover the
+    binary + metadata pair inside them. Returns (binary, metadata, tmpdir)."""
+    adb = _find_adb(adb_override)
+    if adb is None:
+        print("error: adb not found. Install platform-tools or set --adb <path>.",
+              file=sys.stderr)
+        return None, None, None
+    paths = _device_apk_paths(adb, package)
+    if not paths:
+        print("error: package %r not found on device (pm path returned nothing)."
+              % package, file=sys.stderr)
+        print("  is the game installed? try: adb shell pm path %s" % package,
+              file=sys.stderr)
+        return None, None, None
+    print("[+] device APKs for %s (%d):" % (package, len(paths)))
+    for p in paths:
+        print("    %s" % p)
+
+    owned_tmp = tmpdir is None
+    if owned_tmp:
+        tmpdir = tempfile.mkdtemp(prefix="il2cpp_dev_")
+    try:
+        pulls = []
+        for i, remote in enumerate(paths):
+            local = os.path.join(tmpdir, "dev_%02d.apk" % i)
+            if _pull_file(adb, remote, local):
+                pulls.append(local)
+            else:
+                print("  warning: could not pull %s" % remote, file=sys.stderr)
+        if not pulls:
+            print("error: could not pull any APK from the device.", file=sys.stderr)
+            print("  root is usually needed: check `adb shell su -c id`.",
+                  file=sys.stderr)
+            return None, None, tmpdir
+        binary, metadata = _find_pair_in_files(pulls, tmpdir)
+        if not (binary and metadata):
+            print("error: no %s + %s found in the pulled APKs."
+                  % ("/".join(BINARY_NAMES), "/".join(METADATA_NAMES)),
+                  file=sys.stderr)
+            return None, None, tmpdir
+        return binary, metadata, tmpdir
+    except Exception as e:  # noqa: BLE001
+        print("error: device discovery failed: %s" % e, file=sys.stderr)
+        if owned_tmp:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        return None, None, None
+
+
+def _find_pair_in_files(paths, tmpdir):
+    """Search several pulled APK/split files for the binary + metadata pair,
+    combining candidates across all of them (lib in config.arm64_v8a.apk,
+    metadata in base.apk) and preferring arm64-v8a."""
+    binary_candidates: Dict[str, Tuple[int, bytes]] = {}
+    metadata = None
+    for p in paths:
+        try:
+            with zipfile.ZipFile(p) as zf:
+                for entry in zf.namelist():
+                    lname = os.path.basename(entry).lower()
+                    if metadata is None and lname in METADATA_NAMES:
+                        metadata = zf.read(entry)
+                    elif lname in BINARY_NAMES:
+                        if entry not in binary_candidates:
+                            binary_candidates[entry] = (_abi_priority(entry), zf.read(entry))
+        except (zipfile.BadZipFile, OSError):
+            continue
+    if not (binary_candidates and metadata):
+        return None, None
+    best_entry = min(binary_candidates, key=lambda e: binary_candidates[e][0])
+    _, binary = binary_candidates[best_entry]
+    bpath = os.path.join(tmpdir, "libil2cpp.so")
+    mpath = os.path.join(tmpdir, "global-metadata.dat")
+    with open(bpath, "wb") as f:
+        f.write(binary)
+    with open(mpath, "wb") as f:
+        f.write(metadata)
+    return bpath, mpath
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="IL2CPP binary dumper (research/testing tool).")
@@ -2093,12 +2568,38 @@ def main() -> int:
                     help="repeating XOR key (hex) to decrypt protected metadata")
     ap.add_argument("--dump-cs", action="store_true",
                     help="also write a human-readable dump.cs")
+    ap.add_argument("--dump-attributes", action="store_true",
+                    help="with --dump-cs, render custom attributes "
+                         "([Attr(...)] lines) on types/members")
+    ap.add_argument("--dump-events", action="store_true",
+                    help="with --dump-cs, render events (add/remove/raise)")
     ap.add_argument("--version-only", action="store_true",
                     help="just print the metadata version and exit (quick sample check)")
+    ap.add_argument("--device", action="store_true",
+                    help="pull the game from a connected rooted Android device "
+                         "(requires --package)")
+    ap.add_argument("--package", metavar="PKG",
+                    help="game package name, e.g. com.example.game (with --device)")
+    ap.add_argument("--adb", metavar="PATH", default=os.environ.get("ADB"),
+                    help="path to adb binary (default: search PATH + SDK dirs)")
     args = ap.parse_args()
 
     cleanup_dir = None
-    if args.binary and args.metadata:
+    if args.device:
+        if not args.package:
+            ap.error("--device requires --package <pkg>")
+        binary_path, metadata_path, cleanup_dir = discover_device(
+            args.package, adb_override=args.adb)
+        if not (binary_path and metadata_path):
+            print("error: could not pull %s + %s for %r" % (
+                "/".join(BINARY_NAMES), "/".join(METADATA_NAMES), args.package),
+                file=sys.stderr)
+            print("  hint: this needs root (adb shell su -c id) or a debuggable app",
+                  file=sys.stderr)
+            return 1
+        print("[+] device discovery: binary=%s metadata=%s"
+              % (binary_path, metadata_path))
+    elif args.binary and args.metadata:
         binary_path, metadata_path = args.binary, args.metadata
     elif args.game:
         binary_path, metadata_path, cleanup_dir = discover_game(args.game)
@@ -2117,7 +2618,6 @@ def main() -> int:
         return _run(args, binary_path, metadata_path)
     finally:
         if cleanup_dir:
-            import shutil
             shutil.rmtree(cleanup_dir, ignore_errors=True)
 
 
@@ -2222,8 +2722,16 @@ def _run(args, binary_path: str, metadata_path: str) -> int:
             for s in json_out["ScriptString"]]
     with open(os.path.join(args.output, "stringliteral.json"), "w", encoding="utf-8") as f:
         json.dump(lits, f, indent=1, ensure_ascii=False)
+    # Strings.txt: all metadata strings (one per line)
+    with open(os.path.join(args.output, "Strings.txt"), "w", encoding="utf-8") as f:
+        for s in meta.read_all_strings():
+            f.write(s + "\n")
     if args.dump_cs:
-        cs = generate_dump_cs(ctx, bin, meta, version)
+        dump_cs_cfg = {
+            "DumpAttribute": bool(getattr(args, "dump_attributes", False)),
+            "DumpEvent": bool(getattr(args, "dump_events", False)),
+        }
+        cs = generate_dump_cs(ctx, bin, meta, version, dump_cs_cfg)
         with open(os.path.join(args.output, "dump.cs"), "w", encoding="utf-8") as f:
             f.write(cs)
         print("[+] wrote %s (%d bytes)" % (os.path.join(args.output, "dump.cs"), len(cs)))

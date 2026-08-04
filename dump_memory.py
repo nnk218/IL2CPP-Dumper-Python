@@ -34,6 +34,7 @@ MAGIC = b"\xAF\x1B\xB1\xFA"  # 0xFAB11BAF little-endian
 DEFAULT_SIZE = 0x1000000      # 16 MB cap for a metadata dump
 
 ADB = None
+PACKAGE = None   # set when --package given (enables run-as fallback for debuggable apps)
 
 
 def _find_adb():
@@ -49,9 +50,18 @@ def _find_adb():
     return None
 
 
+def _run_as_cmd(args):
+    """Wrap a shell command for `run-as <pkg>` when su isn't available
+    (only useful for debuggable apps; simple commands only)."""
+    if PACKAGE:
+        return "run-as %s %s" % (PACKAGE, args)
+    return None
+
+
 def run_adb(args, su=True):
     """Run an adb shell command; returns (returncode, stdout_bytes).
-    Tries 'su -c' then 'su 0 -c' then 'su root -c' (device su variants)."""
+    Tries 'su -c' then 'su 0 -c' then 'su root -c' (device su variants).
+    Falls back to `run-as <pkg>` for debuggable apps when no su works."""
     adb = _find_adb()
     if adb is None:
         print("error: adb not found on this PC.", file=sys.stderr)
@@ -63,6 +73,12 @@ def run_adb(args, su=True):
         return p.returncode, p.stdout
     for su_prefix in ("su -c", "su 0 -c", "su root -c"):
         p = subprocess.run([adb, "shell", su_prefix, args], capture_output=True)
+        if p.returncode == 0 and p.stdout.strip():
+            return p.returncode, p.stdout
+    # run-as fallback (debuggable apps, no root): only safe for simple commands
+    ra = _run_as_cmd(args)
+    if ra:
+        p = subprocess.run([adb, "shell", ra], capture_output=True)
         if p.returncode == 0 and p.stdout.strip():
             return p.returncode, p.stdout
     return p.returncode, p.stdout
@@ -138,6 +154,12 @@ def read_exact(pid, start, size):
         p = subprocess.run([adb, "exec-out", su_prefix, "-c", dd], capture_output=True)
         if p.stdout:
             return p.stdout
+    if PACKAGE:
+        p = subprocess.run([adb, "exec-out", "run-as", PACKAGE, "dd",
+                            "if=/proc/%d/mem" % pid, "bs=1", "skip=%d" % start,
+                            "count=%d" % size], capture_output=True)
+        if p.stdout:
+            return p.stdout
     return p.stdout
 
 
@@ -159,6 +181,21 @@ def read_range(pid, start, end):
               % (pid, bs, start // bs, count))
     for su_prefix in ("su", "su 0", "su root"):
         p = subprocess.run([adb, "exec-out", su_prefix, "-c", dd], capture_output=True)
+        if p.stdout:
+            return p.stdout
+    if PACKAGE:
+        # run-as can't do shell arithmetic/redirection in dd args; use bs=1 for
+        # small reads and full blocks (count=0 until EOF) for large ones
+        if size < 4096:
+            p = subprocess.run([adb, "exec-out", "run-as", PACKAGE, "dd",
+                                "if=/proc/%d/mem" % pid, "bs=1",
+                                "skip=%d" % start, "count=%d" % size],
+                               capture_output=True)
+        else:
+            p = subprocess.run([adb, "exec-out", "run-as", PACKAGE, "dd",
+                                "if=/proc/%d/mem" % pid, "bs=4096",
+                                "skip=%d" % (start // 4096), "count=%d" % (size // 4096)],
+                               capture_output=True)
         if p.stdout:
             return p.stdout
     return p.stdout
@@ -192,10 +229,14 @@ def main():
     ap.add_argument("--dump-binary", action="store_true",
                     help="also dump libil2cpp.so from memory (relocations applied)")
     ap.add_argument("--out", default="likey_dump", help="output directory")
+    ap.add_argument("--scan-all", action="store_true",
+                    help="also scan file-backed readable ranges, not just "
+                         "anonymous/heap (slower, broader coverage)")
     args = ap.parse_args()
 
-    global ADB
+    global ADB, PACKAGE
     ADB = args.adb
+    PACKAGE = args.package
 
     if not args.package and not args.pid:
         ap.error("provide --package or --pid")
@@ -226,12 +267,17 @@ def main():
 
     ranges = get_maps(pid)
     # keep readable ranges; prefer anonymous/heap, fall back to all 'r'
-    anon = [r for r in ranges if "r" in r["perms"] and
-            (not r["path"] or r["path"].startswith("["))]
-    print("[*] %d readable anonymous ranges (%d total)" % (len(anon), len(ranges)))
+    if args.scan_all:
+        scan_ranges = [r for r in ranges if "r" in r["perms"]]
+        label = "all readable"
+    else:
+        scan_ranges = [r for r in ranges if "r" in r["perms"] and
+                       (not r["path"] or r["path"].startswith("["))]
+        label = "readable anonymous"
+    print("[*] %d %s ranges (%d total)" % (len(scan_ranges), label, len(ranges)))
 
     found = []
-    for i, r in enumerate(anon):
+    for i, r in enumerate(scan_ranges):
         size = r["end"] - r["start"]
         if size <= 0 or size > 0x40000000:
             continue
@@ -243,7 +289,7 @@ def main():
             print("[+] header at VA 0x%x (version %d) in %s" % (va, ver, r["path"] or "<anon>"))
             found.append((va, ver))
         if i % 50 == 0:
-            print("[*] scanned %d/%d ranges" % (i + 1, len(anon)), flush=True)
+            print("[*] scanned %d/%d ranges" % (i + 1, len(scan_ranges)), flush=True)
 
     if not found:
         print("[-] no decrypted metadata header found. Is the game fully loaded?")

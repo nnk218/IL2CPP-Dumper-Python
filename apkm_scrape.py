@@ -27,6 +27,7 @@ Usage:
 
 import argparse
 import http.cookiejar
+import os
 import re
 import ssl
 import sys
@@ -134,6 +135,46 @@ def probe_cdn(cdn):
     return v, detail
 
 
+def download(cdn, dest_dir, chunk=1 << 20):
+    """Download a CDN file to dest_dir with a progress bar. Returns the path."""
+    os.makedirs(dest_dir, exist_ok=True)
+    name = urllib.parse.unquote(cdn.rstrip("/").split("/")[-1].split("?")[0]) or "download.bin"
+    local = os.path.join(dest_dir, name)
+    size = apk_probe.get_size(cdn)
+    got = 0
+    req = urllib.request.Request(cdn)
+    req.add_header("User-Agent", UA)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r, open(local, "wb") as f:
+            while True:
+                b = r.read(chunk)
+                if not b:
+                    break
+                f.write(b)
+                got += len(b)
+                if size:
+                    sys.stderr.write("\r  downloading... %d/%d MB (%.0f%%)"
+                                     % (got >> 20, size >> 20, 100.0 * got / size))
+                else:
+                    sys.stderr.write("\r  downloading... %d MB" % (got >> 20))
+                sys.stderr.flush()
+    except Exception as e:
+        sys.stderr.write("\n")
+        raise RuntimeError("download failed: %s" % e)
+    sys.stderr.write("\n")
+    return local
+
+
+def dump_local(game_path, dump_dir, dump_cs=False):
+    """Run the main dumper on a local file. Returns the dump_game exit code."""
+    import subprocess
+    cmd = [sys.executable, "dump_game.py", "-g", game_path, "-o", dump_dir]
+    if dump_cs:
+        cmd.append("--dump-cs")
+    print("[*] dumping %s -> %s" % (game_path, dump_dir))
+    return subprocess.call(cmd)
+
+
 def search_releases(query):
     """Search APKMirror; return (name, release_url) pairs."""
     q = urllib.parse.quote(query)
@@ -158,6 +199,11 @@ def main():
     ap.add_argument("--probe-only", help="probe CDN URL(s) directly")
     ap.add_argument("--all-variants", action="store_true",
                     help="probe every variant of a release (default: first)")
+    ap.add_argument("--download", metavar="DIR",
+                    help="after resolving the CDN URL, download the file into "
+                         "DIR and run dump_game.py on it")
+    ap.add_argument("--dump-cs", action="store_true",
+                    help="with --download, also write dump.cs")
     ap.add_argument("--delay", type=float, default=4.0, help="delay between hops")
     args = ap.parse_args()
 
@@ -212,6 +258,11 @@ def main():
                     print("   CDN: %s" % cdn[:120])
                     v, detail = probe_cdn(cdn)
                     print("   metadata version: %s (%s)" % (v, detail))
+                    if args.download and v is not None:
+                        local = download(cdn, args.download)
+                        print("   downloaded: %s" % local)
+                        rc = dump_local(local, args.download, args.dump_cs)
+                        print("   dump_game exit code: %d" % rc)
                 except Exception as e:
                     print("   FAILED: %s" % e)
     else:
@@ -221,6 +272,11 @@ def main():
                 print("CDN: %s" % cdn[:120])
                 v, detail = probe_cdn(cdn)
                 print("metadata version: %s (%s)" % (v, detail))
+                if args.download and v is not None:
+                    local = download(cdn, args.download)
+                    print("downloaded: %s" % local)
+                    rc = dump_local(local, args.download, args.dump_cs)
+                    print("dump_game exit code: %d" % rc)
             except Exception as e:
                 print("FAILED: %s" % e)
 

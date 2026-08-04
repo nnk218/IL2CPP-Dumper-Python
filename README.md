@@ -108,6 +108,21 @@ The `-g` flag searches inside the archive for `libil2cpp.so` and `global-metadat
 python3 dump_game.py -b /path/to/libil2cpp.so -m /path/to/global-metadata.dat -o out/
 ```
 
+### Dump straight from a connected rooted device
+
+If the game is installed on your phone, `--device` pulls the APK/splits from the
+device (via `adb` + root), discovers the binary + metadata inside, and dumps
+them — no manual APK extraction needed:
+
+```bash
+python3 dump_game.py --device --package com.example.game -o out/
+```
+
+- Requires `adb` + a rooted device (or a debuggable app).
+- Uses `pm path <pkg>` to find the installed base + split APKs, prefers
+  arm64-v8a when several ABIs are present.
+- Equivalent to `dump_game.py -g <the pulled.apk>`; everything else works the same.
+
 ### Protected metadata (XOR-encrypted)
 
 Some games XOR-encrypt `global-metadata.dat`. If you see:
@@ -147,6 +162,17 @@ python3 dump_game.py -b likey_dump/libil2cpp.memorydump.so \
 
 > `dump_memory.py` needs `adb` + a rooted phone. It does **not** need Frida or any app installed on the phone.
 
+For games that keep the decrypted metadata in a file-backed mapping (not an
+anonymous/heap region), add `--scan-all` to scan every readable range:
+
+```bash
+python3 dump_memory.py --package com.example.game --dump-binary --scan-all
+```
+
+For **debuggable** apps with no root, `dump_memory.py` automatically falls back
+to `adb shell run-as <package>` (same-user `/proc/<pid>/mem` access), so it can
+work without root there.
+
 ### Standalone metadata inspection
 
 ```bash
@@ -182,6 +208,23 @@ python3 apk_probe.py url1 url2 url3                           # probe many at on
 Prints the metadata version (or why it failed). Map version → Unity era via
 `SAMPLES.md` (29=Unity2021, 31=Unity2022.1, 33=Unity2022.3, 35=Unity2023/Unity6,
 39=Unity6).
+
+### Hunt, download and dump from APKMirror
+
+`apkm_scrape.py` walks APKMirror's 4-hop download chain (release → variant →
+interstitial → CDN URL) with a cookie session, probes the metadata version via
+Range requests, and — with `--download` — fetches the file and dumps it:
+
+```bash
+# Just check a release's metadata version (no download):
+python3 apkm_scrape.py --release https://www.apkmirror.com/apk/.../release/
+
+# Resolve the CDN URL, download the APK into ./hunt/, then run dump_game.py:
+python3 apkm_scrape.py "royal match" --download hunt/ --dump-cs
+```
+
+It retries with backoff on APKMirror's rate-limits (429/403); use
+`--delay <seconds>` to slow down if you get throttled.
 
 ### Annotating a disassembler (IDA / Ghidra)
 
@@ -220,6 +263,9 @@ Both scripts:
 | `--xor-key HEX` | XOR key to decrypt protected metadata |
 | `--dump-cs` | Also write a human-readable `dump.cs` |
 | `--no-symbol` | Skip symbol search (force the scan-based lookup) |
+| `--device` | Pull the game from a connected rooted device (needs `--package`) |
+| `--package PKG` | Game package name (with `--device`) |
+| `--adb PATH` | Path to `adb` (default: search PATH + SDK dirs) |
 
 ### dump_metadata.py
 
@@ -242,6 +288,7 @@ Both scripts:
 | `--adb` | Path to the adb binary (default: search PATH) |
 | `--size` | Bytes to dump from the found metadata header |
 | `--dump-binary` | Also dump `libil2cpp.so` from memory (relocations applied) |
+| `--scan-all` | Also scan file-backed readable ranges (broader coverage, slower) |
 | `--out` | Output directory (default: `likey_dump/`) |
 
 ---
