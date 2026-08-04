@@ -54,7 +54,8 @@ il2cpp_dumper/
 │   ├── apk/            ← .apk / .apkm / .xapk files
 │   ├── lib/            ← libil2cpp.so
 │   └── metadata/       ← global-metadata.dat
-└── DumpResult/         ← default output directory (auto-created)
+└── DumpResult/         ← dump output (auto-created)
+    └── <timestamp>/    ← one subfolder per run (e.g. 2026-08-04_13-10-59)
 ```
 
 When you run `python3 dumpers/dump_game.py` with **no arguments**, it
@@ -64,8 +65,10 @@ automatically scans `DumpPayload/`:
   they're used directly.
 - If an APK is in `apk/`, the dumper discovers the pair inside it.
 
-These are just conveniences — you can use any paths you like with `-b`, `-m`,
-`-g`, and `-o`.
+Every run writes its output into a **fresh `DumpResult/<timestamp>/` subfolder**,
+so previous results are never overwritten and remain usable. If you want to
+write exactly to a specific folder instead, pass `-o <dir>` (that path is used
+as-is).
 
 ---
 
@@ -281,7 +284,7 @@ Both scripts:
 | `-g, --game PATH` | APK/AAB/XAPK file or extracted game directory (auto-discovery) |
 | `-b, --binary` | Explicit `libil2cpp.so` / `GameAssembly.dll` (overrides `-g`) |
 | `-m, --metadata` | Explicit `global-metadata.dat` (overrides `-g`) |
-| `-o, --output` | Output directory (default: current directory) |
+| `-o, --output` | Output directory (default: a new `DumpResult/<timestamp>/` subfolder) |
 | `--version` | Force il2cpp version (e.g. `39`) |
 | `--xor-key HEX` | XOR key to decrypt protected metadata |
 | `--dump-cs` | Also write a human-readable `dump.cs` |
@@ -312,7 +315,7 @@ Both scripts:
 | `--size` | Bytes to dump from the found metadata header |
 | `--dump-binary` | Also dump `libil2cpp.so` from memory (relocations applied) |
 | `--scan-all` | Also scan file-backed readable ranges (broader coverage, slower) |
-| `--out` | Output directory (default: `likey_dump/`) |
+| `--out` | Output directory (default: a new `DumpResult/<timestamp>/` subfolder) |
 
 ---
 

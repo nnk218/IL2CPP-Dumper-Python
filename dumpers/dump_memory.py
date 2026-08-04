@@ -228,11 +228,23 @@ def main():
                     help="bytes to dump from the found header (default 0x1000000)")
     ap.add_argument("--dump-binary", action="store_true",
                     help="also dump libil2cpp.so from memory (relocations applied)")
-    ap.add_argument("--out", default="DumpResult", help="output directory")
+    ap.add_argument("--out", default=None, help="output directory "
+                    "(default: a new DumpResult/<timestamp>/ subfolder)")
     ap.add_argument("--scan-all", action="store_true",
                     help="also scan file-backed readable ranges, not just "
                          "anonymous/heap (slower, broader coverage)")
     args = ap.parse_args()
+
+    if args.out is None:
+        import datetime
+        base = os.path.join("DumpResult",
+                            datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+        args.out = base
+        n = 2
+        while os.path.exists(args.out):
+            args.out = "%s_%d" % (base, n)
+            n += 1
+        print("[*] output: %s" % args.out)
 
     global ADB, PACKAGE
     ADB = args.adb

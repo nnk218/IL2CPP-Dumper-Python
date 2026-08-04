@@ -2826,7 +2826,8 @@ def main() -> int:
                                            "(overrides -g discovery)")
     ap.add_argument("-m", "--metadata", help="global-metadata.dat "
                                              "(overrides -g discovery)")
-    ap.add_argument("-o", "--output", default="DumpResult", help="output directory")
+    ap.add_argument("-o", "--output", default=None, help="output directory "
+                    "(default: a new DumpResult/<timestamp>/ subfolder)")
     ap.add_argument("--version", type=float, help="force il2cpp version override")
     ap.add_argument("--no-symbol", action="store_true",
                     help="skip symbol search (force scan-based lookup)")
@@ -2852,6 +2853,20 @@ def main() -> int:
     ap.add_argument("--adb", metavar="PATH", default=os.environ.get("ADB"),
                     help="path to adb binary (default: search PATH + SDK dirs)")
     args = ap.parse_args()
+
+    # Default output: a fresh DumpResult/<timestamp>/ subfolder per run, so
+    # previous results are never overwritten. Explicit -o writes exactly there.
+    if args.output is None:
+        import datetime
+        base = os.path.join("DumpResult",
+                            datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+        out = base
+        n = 2
+        while os.path.exists(out):
+            out = "%s_%d" % (base, n)
+            n += 1
+        args.output = out
+        print("[*] output: %s" % args.output)
 
     cleanup_dir = None
     if args.device:
