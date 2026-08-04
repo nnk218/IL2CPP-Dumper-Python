@@ -32,8 +32,8 @@ python3 --version   # must be 3.8 or newer
 ### Option A — clone from GitHub (recommended)
 
 ```bash
-git clone https://github.com/nnk218/IL2CPP-Dumper-Python.git
-cd IL2CPP-Dumper-Python
+git clone https://github.com/nnk218/IL2CPPDumperPython.git
+cd IL2CPPDumperPython
 ```
 
 ### Option B — download a release zip
