@@ -381,6 +381,9 @@ def main():
     ap = argparse.ArgumentParser(description="Generate ELF fixtures.")
     ap.add_argument("--bits", type=int, choices=(64, 32), default=64)
     args = ap.parse_args()
+    HERE = os.path.dirname(os.path.abspath(__file__))
+    FIXTURES = os.path.join(HERE, "fixtures")
+    sys.path.insert(0, os.path.join(HERE, "..", "dumpers"))
     bits = args.bits
     suffix = "" if bits == 64 else "32"
     data_off = data_off_for(bits)
@@ -390,10 +393,10 @@ def main():
     blob, _ = assemble_elf(data, [("g_CodeRegistration", va(offs["code_reg"], data_off)),
                                   ("g_MetadataRegistration", va(offs["meta_reg"], data_off))],
                            bits)
-    sym_name = "libil2cpp_test%s.so" % suffix
+    sym_name = os.path.join(HERE, "libil2cpp_test%s.so" % suffix)
     with open(sym_name, "wb") as f:
         f.write(blob)
-    c, m = self_check_elf(sym_name, "sample.dat", expect_scan=False, bits=bits)
+    c, m = self_check_elf(sym_name, os.path.join(FIXTURES, "sample.dat"), expect_scan=False, bits=bits)
     assert c == va(offs["code_reg"], data_off) and m == va(offs["meta_reg"], data_off), \
         (hex(c), hex(m))
     print("wrote %s (%d bytes)" % (sym_name, len(blob)))
@@ -401,10 +404,10 @@ def main():
     # ---- scan-path fixture: sample_mscorlib.dat ----
     data2, offs2 = build_data(scan_path=True, bits=bits, data_off=data_off)
     blob2, _ = assemble_elf(data2, None, bits)
-    scan_name = "libil2cpp_scan_test%s.so" % suffix
+    scan_name = os.path.join(HERE, "libil2cpp_scan_test%s.so" % suffix)
     with open(scan_name, "wb") as f:
         f.write(blob2)
-    c2, m2 = self_check_elf(scan_name, "sample_mscorlib.dat", expect_scan=True, bits=bits)
+    c2, m2 = self_check_elf(scan_name, os.path.join(FIXTURES, "sample_mscorlib.dat"), expect_scan=True, bits=bits)
     assert c2 == va(offs2["code_reg"], data_off) and m2 == va(offs2["meta_reg"], data_off), \
         (hex(c2), hex(m2))
     print("wrote %s (%d bytes)" % (scan_name, len(blob2)))

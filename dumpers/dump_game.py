@@ -37,7 +37,12 @@ import tempfile
 import zipfile
 from typing import Dict, List, Optional, Tuple
 
-from dump_metadata import Metadata, method_def_size, type_def_size
+# Run from any cwd — ensure the project root is importable
+_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
+from dumpers.dump_metadata import Metadata, method_def_size, type_def_size
 
 # --------------------------------------------------------------------------
 # Version-gated struct layouts (Il2CppClass.cs). Spec: (name, kind, [(min,max)])

@@ -168,7 +168,9 @@ def download(cdn, dest_dir, chunk=1 << 20):
 def dump_local(game_path, dump_dir, dump_cs=False):
     """Run the main dumper on a local file. Returns the dump_game exit code."""
     import subprocess
-    cmd = [sys.executable, "dump_game.py", "-g", game_path, "-o", dump_dir]
+    HERE = os.path.dirname(os.path.abspath(__file__))
+    cmd = [sys.executable, os.path.join(HERE, "..", "dumpers", "dump_game.py"),
+           "-g", game_path, "-o", dump_dir]
     if dump_cs:
         cmd.append("--dump-cs")
     print("[*] dumping %s -> %s" % (game_path, dump_dir))

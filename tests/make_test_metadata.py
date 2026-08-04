@@ -28,14 +28,17 @@ import struct
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "..", "dumpers"))
 from dump_metadata import MAGIC, header_fields
 
 VERSION = 31
 KEY = bytes.fromhex("00112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f")
 
-OUT_PLAIN = "sample.dat"
-OUT_XOR = "sample_xor.dat"
+FIXTURES = os.path.join(HERE, "fixtures")
+os.makedirs(FIXTURES, exist_ok=True)
+OUT_PLAIN = os.path.join(FIXTURES, "sample.dat")
+OUT_XOR = os.path.join(FIXTURES, "sample_xor.dat")
 
 STRINGS = [
     "Assembly-CSharp",  # 0
@@ -228,20 +231,20 @@ def main():
         f.write(plain)
     with open(OUT_XOR, "wb") as f:
         f.write(enc)
-    with open("sample_mscorlib.dat", "wb") as f:
+    with open(os.path.join(FIXTURES, "sample_mscorlib.dat"), "wb") as f:
         f.write(mscorlib)
 
     # protected mscorlib variant (pairs with libil2cpp_scan_test*.so)
     enc_m = bytearray(mscorlib)
     for i in range(len(enc_m)):
         enc_m[i] ^= KEY[i % len(KEY)]
-    with open("sample_mscorlib_xor.dat", "wb") as f:
+    with open(os.path.join(FIXTURES, "sample_mscorlib_xor.dat"), "wb") as f:
         f.write(enc_m)
 
     print("wrote %s (%d bytes, version %d)" % (OUT_PLAIN, len(plain), VERSION))
     print("wrote %s (%d bytes, XOR key: %s)" % (OUT_XOR, len(enc), KEY.hex()))
-    print("wrote sample_mscorlib.dat (%d bytes, image 'mscorlib.dll')" % len(mscorlib))
-    print("wrote sample_mscorlib_xor.dat (%d bytes, XOR key: %s)" % (len(enc_m), KEY.hex()))
+    print("wrote fixtures/sample_mscorlib.dat (%d bytes, image 'mscorlib.dll')" % len(mscorlib))
+    print("wrote fixtures/sample_mscorlib_xor.dat (%d bytes, XOR key: %s)" % (len(enc_m), KEY.hex()))
 
 
 if __name__ == "__main__":

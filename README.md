@@ -23,10 +23,10 @@ This project automates that. It's written in pure Python (no third-party package
 | Tool | Needed for | How to get it |
 |---|---|---|
 | Python 3.8+ | Everything | `sudo pacman -S python` (Arch/CachyOS) |
-| `adb` | Only `dump_memory.py` (running-game dumps) | `sudo pacman -S android-tools` |
-| A rooted phone | Only `dump_memory.py` | e.g. Magisk, KernelSU, SuKisu |
+| `adb` | Only `dumpers/dump_memory.py` (running-game dumps) | `sudo pacman -S android-tools` |
+| A rooted phone | Only `dumpers/dump_memory.py` | e.g. Magisk, KernelSU, SuKisu |
 
-The core dumpers (`dump_game.py`, `dump_metadata.py`) need **only Python** — no phone, no adb.
+The core dumpers (`dumpers/dump_game.py`, `dumpers/dump_metadata.py`) need **only Python** — no phone, no adb.
 
 ### Optional: install as commands (pip)
 
@@ -63,10 +63,10 @@ If you only have the APK/XAPK, the dumper can extract both automatically (see be
 
 ```bash
 # From an APK or XAPK (auto-discovers both files):
-python3 dump_game.py -g game.apk -o out/
+python3 dumpers/dump_game.py -g game.apk -o out/
 
 # Or from already-extracted files:
-python3 dump_game.py -b libil2cpp.so -m global-metadata.dat -o out/
+python3 dumpers/dump_game.py -b libil2cpp.so -m global-metadata.dat -o out/
 ```
 
 ### 3. Read the results
@@ -82,7 +82,7 @@ After it finishes, `out/` contains:
 For a human-readable dump, run:
 
 ```bash
-python3 dump_game.py -g game.apk --dump-cs -o out/
+python3 dumpers/dump_game.py -g game.apk --dump-cs -o out/
 # -> produces out/dump.cs, a .cs file you can open in any text editor
 ```
 
@@ -93,8 +93,8 @@ python3 dump_game.py -g game.apk --dump-cs -o out/
 ### Dump from an APK / XAPK (recommended)
 
 ```bash
-python3 dump_game.py -g game.apk -o out/
-python3 dump_game.py -g game.xapk -o out/
+python3 dumpers/dump_game.py -g game.apk -o out/
+python3 dumpers/dump_game.py -g game.xapk -o out/
 ```
 
 The `-g` flag searches inside the archive for `libil2cpp.so` and `global-metadata.dat`. It handles:
@@ -105,7 +105,7 @@ The `-g` flag searches inside the archive for `libil2cpp.so` and `global-metadat
 ### Dump from extracted files
 
 ```bash
-python3 dump_game.py -b /path/to/libil2cpp.so -m /path/to/global-metadata.dat -o out/
+python3 dumpers/dump_game.py -b /path/to/libil2cpp.so -m /path/to/global-metadata.dat -o out/
 ```
 
 ### Dump straight from a connected rooted device
@@ -134,13 +134,13 @@ error: bad magic - file may be protected
 either pass the XOR key:
 
 ```bash
-python3 dump_game.py -b libil2cpp.so -m global-metadata.dat --xor-key <hex-key> -o out/
+python3 dumpers/dump_game.py -b libil2cpp.so -m global-metadata.dat --xor-key <hex-key> -o out/
 ```
 
 or let the dumper try to auto-detect it (works for 4-byte repeating keys):
 
 ```bash
-python3 dump_game.py -b libil2cpp.so -m global-metadata.dat -o out/
+python3 dumpers/dump_game.py -b libil2cpp.so -m global-metadata.dat -o out/
 ```
 
 ### Custom-encrypted games (LIKEY, etc.)
@@ -149,14 +149,14 @@ If the metadata starts with a custom marker like `LIKEY`, static tools (includin
 
 ```bash
 # 1. On the PC, phone connected (USB debugging + root), game open:
-python3 dump_memory.py --package com.example.game --dump-binary
+python3 dumpers/dump_memory.py --package com.example.game --dump-binary
 
 # 2. This writes:
 #    likey_dump/global-metadata.decrypted.<addr>.dat  (the decrypted metadata)
 #    likey_dump/libil2cpp.memorydump.so               (the lib, with relocations applied)
 
 # 3. Dump normally:
-python3 dump_game.py -b likey_dump/libil2cpp.memorydump.so \
+python3 dumpers/dump_game.py -b likey_dump/libil2cpp.memorydump.so \
     -m likey_dump/global-metadata.decrypted.<addr>.dat -o out/
 ```
 
@@ -166,7 +166,7 @@ For games that keep the decrypted metadata in a file-backed mapping (not an
 anonymous/heap region), add `--scan-all` to scan every readable range:
 
 ```bash
-python3 dump_memory.py --package com.example.game --dump-binary --scan-all
+python3 dumpers/dump_memory.py --package com.example.game --dump-binary --scan-all
 ```
 
 For **debuggable** apps with no root, `dump_memory.py` automatically falls back
@@ -177,10 +177,10 @@ work without root there.
 
 ```bash
 # Text dump to screen:
-python3 dump_metadata.py -i global-metadata.dat
+python3 dumpers/dump_metadata.py -i global-metadata.dat
 
 # To a file, plus a JSON dump and string tables:
-python3 dump_metadata.py -i global-metadata.dat -o dump.txt --json --strings
+python3 dumpers/dump_metadata.py -i global-metadata.dat -o dump.txt --json --strings
 ```
 
 ### Forcing a metadata version (advanced)
@@ -188,7 +188,7 @@ python3 dump_metadata.py -i global-metadata.dat -o dump.txt --json --strings
 If auto-detection picks the wrong version:
 
 ```bash
-python3 dump_game.py -b libil2cpp.so -m global-metadata.dat --version 39 -o out/
+python3 dumpers/dump_game.py -b libil2cpp.so -m global-metadata.dat --version 39 -o out/
 ```
 
 ### Probe a game's metadata version before downloading it (APK/APKM/XAPK)
@@ -200,9 +200,9 @@ inflates it). Great for hunting which version a game is before committing to a
 large download.
 
 ```bash
-python3 apk_probe.py https://www.example.com/game.apk        # remote URL
-python3 apk_probe.py game.apkm                                # local file also works
-python3 apk_probe.py url1 url2 url3                           # probe many at once
+python3 tools/apk_probe.py https://www.example.com/game.apk        # remote URL
+python3 tools/apk_probe.py game.apkm                                # local file also works
+python3 tools/apk_probe.py url1 url2 url3                           # probe many at once
 ```
 
 Prints the metadata version (or why it failed). Map version → Unity era via
@@ -217,10 +217,10 @@ Range requests, and — with `--download` — fetches the file and dumps it:
 
 ```bash
 # Just check a release's metadata version (no download):
-python3 apkm_scrape.py --release https://www.apkmirror.com/apk/.../release/
+python3 tools/apkm_scrape.py --release https://www.apkmirror.com/apk/.../release/
 
 # Resolve the CDN URL, download the APK into ./hunt/, then run dump_game.py:
-python3 apkm_scrape.py "royal match" --download hunt/ --dump-cs
+python3 tools/apkm_scrape.py "royal match" --download hunt/ --dump-cs
 ```
 
 It retries with backoff on APKMirror's rate-limits (429/403); use
@@ -232,10 +232,10 @@ After dumping, you can apply names/comments to the disassembly so functions show
 their C# names (`MonoBehaviour.IsInvoking` instead of `sub_6A41384`).
 
 **IDA** — open `libil2cpp.so` in IDA, then `File > Script file...` and pick
-`ida_annotate.py`. It prompts for your `script.json`.
+`tools/ida_annotate.py`. It prompts for your `script.json`.
 
 **Ghidra** — import the binary, then `Window > Script Manager` → add this
-repo's folder (green `+`) → run `ghidra_annotate.py`. It prompts for
+repo's folder (green `+`) → run `tools/ghidra_annotate.py`. It prompts for
 `script.json`.
 
 Both scripts:
@@ -267,7 +267,7 @@ Both scripts:
 | `--package PKG` | Game package name (with `--device`) |
 | `--adb PATH` | Path to `adb` (default: search PATH + SDK dirs) |
 
-### dump_metadata.py
+### dumpers/dump_metadata.py
 
 | Option | Description |
 |---|---|
@@ -298,10 +298,10 @@ Both scripts:
 The repo includes a self-contained test suite (synthetic metadata + ELF fixtures, no game files needed):
 
 ```bash
-python3 make_test_metadata.py
-python3 make_test_elf.py --bits 64
-python3 make_test_elf.py --bits 32
-python3 run_sweep.py        # 10/10 combinations should PASS
+python3 tests/make_test_metadata.py
+python3 tests/make_test_elf.py --bits 64
+python3 tests/make_test_elf.py --bits 32
+python3 tests/run_sweep.py        # 10/10 combinations should PASS
 ```
 
 ---
@@ -331,17 +331,21 @@ python3 run_sweep.py        # 10/10 combinations should PASS
 ## Project layout
 
 ```
-dump_game.py            Main dumper: APK discovery, registration search, script.json + dump.cs
-dump_metadata.py        Standalone global-metadata.dat parser/renderer
-dump_memory.py          Rooted-device memory dumper (LIKEY / custom-encrypted games)
-apk_probe.py            Check a remote APK/APKM/XAPK's metadata version (no full download)
-apkm_scrape.py          Scrape APKMirror download chain to CDN URLs, then probe versions
-likey_dump.py           (legacy) Frida-based metadata scanner
-ida_annotate.py         Apply names/comments to an IDA database from script.json
-ghidra_annotate.py      Apply names/comments to a Ghidra program from script.json
-make_test_elf.py        Synthetic ELF fixture generator (tests)
-make_test_metadata.py   Synthetic metadata fixture generator (tests)
-run_sweep.py            Regression test runner
+dumpers/
+    dump_game.py            Main dumper: APK discovery, registration search, script.json + dump.cs
+    dump_metadata.py        Standalone global-metadata.dat parser/renderer
+    dump_memory.py          Rooted-device memory dumper (LIKEY / custom-encrypted games)
+    frida_il2cpp_dump.py    Frida runtime (active-call) dumper
+    likey_dump.py           (legacy) Frida-based metadata scanner
+tools/
+    apk_probe.py            Check a remote APK/APKM/XAPK's metadata version (no full download)
+    apkm_scrape.py          Scrape APKMirror download chain to CDN URLs, then probe versions
+    ida_annotate.py         Apply names/comments to an IDA database from script.json
+    ghidra_annotate.py      Apply names/comments to a Ghidra program from script.json
+tests/
+    make_test_elf.py        Synthetic ELF fixture generator (tests)
+    make_test_metadata.py   Synthetic metadata fixture generator (tests)
+    run_sweep.py            Regression test runner
 ```
 
 ## Notes

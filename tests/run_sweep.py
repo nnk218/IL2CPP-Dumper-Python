@@ -28,7 +28,14 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BINDUMPER = os.path.join(HERE, "dump_game.py")
+ROOT = os.path.dirname(HERE)
+sys.path.insert(0, os.path.join(ROOT, "dumpers"))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+
+BINDUMPER = os.path.join(ROOT, "dumpers", "dump_game.py")
+MAKE_META = os.path.join(HERE, "make_test_metadata.py")
+MAKE_ELF = os.path.join(HERE, "make_test_elf.py")
+FIXTURES = os.path.join(HERE, "fixtures")
 XOR_KEY = "00112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f"
 
 # 4-byte repeating key fixture (auto-detectable without --xor-key)
@@ -38,8 +45,8 @@ KEY4 = bytes([0x05, 0x06, 0x07, 0x08])
 def _make_xor4():
     """sample_xor4.dat: sample.dat XOR'd with a 4-byte key (no --xor-key needed)."""
     from dump_metadata import xor_decrypt
-    src = os.path.join(HERE, "sample.dat")
-    out = os.path.join(HERE, "sample_xor4.dat")
+    src = os.path.join(FIXTURES, "sample.dat")
+    out = os.path.join(FIXTURES, "sample_xor4.dat")
     if not os.path.exists(out):
         with open(src, "rb") as f:
             data = f.read()
@@ -70,7 +77,7 @@ EXPECTED = {name: (1, 1, 1, 1, 1) for name in CASES}
 
 def run_one(name, binary, metadata, xor_key, outdir):
     cmd = [sys.executable, BINDUMPER, "-b", os.path.join(HERE, binary),
-           "-m", os.path.join(HERE, metadata), "-o", outdir]
+           "-m", os.path.join(FIXTURES, metadata), "-o", outdir]
     if xor_key:
         cmd += ["--xor-key", xor_key]
     res = subprocess.run(cmd, capture_output=True, text=True)

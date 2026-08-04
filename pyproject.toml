@@ -18,13 +18,10 @@ classifiers = [
 ]
 
 [project.scripts]
-dump-game = "dump_game:main"
-dump-metadata = "dump_metadata:main"
-dump-memory = "dump_memory:main"
+dump-game = "dumpers.dump_game:main"
+dump-metadata = "dumpers.dump_metadata:main"
+dump-memory = "dumpers.dump_memory:main"
 
 [tool.setuptools]
-py-modules = [
-    "dump_game",
-    "dump_metadata",
-    "dump_memory",
-]
+py-modules = []
+packages = ["dumpers", "tools", "tests"]
