@@ -133,6 +133,25 @@ python3 dumpers/dump_game.py -b DumpResult/<ts>/libil2cpp.memorydump.so \
 > Debuggable apps without root: `dump_memory.py` automatically falls back to
 > `adb shell run-as <package>`.
 
+### Against an emulator (no phone)
+
+`python3 tools/emulator_dump.py` connects adb to a local emulator and then
+delegates the exact same scan to `dump_memory.py` — no phone needed.
+
+```bash
+# Waydroid (Linux) — the default
+python3 tools/emulator_dump.py --package com.example.game --dump-binary
+
+# explicit container IP (if auto-detection misses)
+python3 tools/emulator_dump.py --waydroid-ip 192.168.240.112 --package com.example.game --dump-binary
+
+# other emulators (LDPlayer / MuMu / BlueStacks)
+python3 tools/emulator_dump.py --emulator mumu --package com.example.game --dump-binary
+```
+
+All flags of `dump_memory.py` pass through (`--dump-binary`, `--scan-all`,
+`--size`, `--out`).
+
 ---
 
 ## Frida runtime dumper
