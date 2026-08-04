@@ -288,6 +288,7 @@ dump_game.py            Main dumper: APK discovery, registration search, script.
 dump_metadata.py        Standalone global-metadata.dat parser/renderer
 dump_memory.py          Rooted-device memory dumper (LIKEY / custom-encrypted games)
 apk_probe.py            Check a remote APK/APKM/XAPK's metadata version (no full download)
+apkm_scrape.py          Scrape APKMirror download chain to CDN URLs, then probe versions
 likey_dump.py           (legacy) Frida-based metadata scanner
 ida_annotate.py         Apply names/comments to an IDA database from script.json
 ghidra_annotate.py      Apply names/comments to a Ghidra program from script.json
@@ -300,3 +301,4 @@ run_sweep.py            Regression test runner
 
 - Validated against Perfare/Il2CppDumper output on multiple real 64-bit Unity games (byte-identical classes/members with attributes off).
 - Real-game assets and dump outputs are excluded from the repo via `.gitignore`; only source and synthetic fixtures are committed.
+- Windows/PE support (`GameAssembly.dll`) is experimental: the dumpers are tuned for Android ELF binaries and may fail on stripped PE builds.

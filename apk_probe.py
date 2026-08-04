@@ -55,14 +55,45 @@ def get_size(url):
     req.add_header("User-Agent", "Mozilla/5.0")
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
-            return int(resp.headers.get("Content-Length", 0))
+            size = int(resp.headers.get("Content-Length", 0))
+            if size > 0:
+                return size
+            if resp.headers.get("Content-Range"):
+                return _content_range_total(resp.headers.get("Content-Range"))
     except Exception:
         pass
-    # fallback: request first byte, read Content-Range
+    # fallback: request 1 byte, read Content-Range header
     try:
-        data = fetch_range(url, 0, 1)
-        return 0
+        req = urllib.request.Request(url)
+        req.add_header("Range", "bytes=0-0")
+        req.add_header("User-Agent", "Mozilla/5.0")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            cr = resp.headers.get("Content-Range")
+            if cr:
+                return _content_range_total(cr)
+            cl = int(resp.headers.get("Content-Length", 0))
+            if cl > 0:
+                return cl
+            return 0
+    except urllib.error.HTTPError as e:
+        if e.code == 206:
+            cr = e.headers.get("Content-Range")
+            if cr:
+                return _content_range_total(cr)
+        elif e.code == 416:
+            cr = e.headers.get("Content-Range")
+            if cr:
+                return _content_range_total(cr)
     except Exception:
+        pass
+    return 0
+
+
+def _content_range_total(cr):
+    """Parse 'bytes 0-0/123456' -> 123456 (also handles '*')."""
+    try:
+        return int(cr.split("/")[1])
+    except (IndexError, ValueError):
         return 0
 
 
