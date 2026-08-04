@@ -1440,6 +1440,9 @@ class DumpCsGenerator:
         self.bin = bin
         self.meta = meta
         self.version = version
+        # index -> entry lookup for default values (avoids O(N) scans)
+        self._field_defaults_by_idx = {fd.get("fieldIndex", -1): fd for fd in meta.field_defaults}
+        self._param_defaults_by_idx = {pd.get("parameterIndex", -1): pd for pd in meta.param_defaults}
         # caches for the attribute/event lookups (avoid re-scanning images)
         self._type_to_image: List[int] = []
         for img in meta.images:
@@ -1766,44 +1769,45 @@ class DumpCsGenerator:
         blob/array default the value can't be decoded into a literal, so the
         reference emits the raw dataIndex as /*Metadata offset 0x..*/."""
         meta = self.meta
-        for fd in meta.field_defaults:
-            if fd.get("fieldIndex", -1) == field_index:
-                data_index = fd.get("dataIndex", -1)
-                if data_index < 0:
-                    return None, None
-                base = meta._sec_off("fieldAndParameterDefaultValueData")
-                size = meta._sec_size("fieldAndParameterDefaultValueData")
-                if base <= 0 or data_index >= size:
-                    return None, None
-                ti = fd.get("typeIndex", -1)
-                code = -1
-                if 0 <= ti < len(self.ctx.types):
-                    code = self.ctx.types[ti].code
-                if code in (0x1D, 0x14, 0x15, 0x11, 0x12, 0x1C, -1):  # blob/array/class/object/unknown
-                    return None, base + data_index
-                val, _ = decode_constant(meta.data, base + data_index, code, self.version)
-                return val, None
-        return None, None
+        fd = self._field_defaults_by_idx.get(field_index)
+        if fd is None:
+            return None, None
+        data_index = fd.get("dataIndex", -1)
+        if data_index < 0:
+            return None, None
+        base = meta._sec_off("fieldAndParameterDefaultValueData")
+        size = meta._sec_size("fieldAndParameterDefaultValueData")
+        if base <= 0 or data_index >= size:
+            return None, None
+        ti = fd.get("typeIndex", -1)
+        code = -1
+        if 0 <= ti < len(self.ctx.types):
+            code = self.ctx.types[ti].code
+        if code in (0x1D, 0x14, 0x15, 0x11, 0x12, 0x1C, -1):  # blob/array/class/object/unknown
+            return None, base + data_index
+        val, _ = decode_constant(meta.data, base + data_index, code, self.version)
+        return val, None
 
     def _param_default_value(self, param_index: int):
         meta = self.meta
-        for pd in meta.param_defaults:
-            if pd.get("parameterIndex", -1) == param_index:
-                data_index = pd.get("dataIndex", -1)
-                if data_index < 0:
-                    return None, None
-                base = meta._sec_off("fieldAndParameterDefaultValueData")
-                size = meta._sec_size("fieldAndParameterDefaultValueData")
-                if base <= 0 or data_index >= size:
-                    return None, None
-                ti = pd.get("typeIndex", -1)
-                code = -1
-                if 0 <= ti < len(self.ctx.types):
-                    code = self.ctx.types[ti].code
-                if code in (0x1D, 0x14, 0x15, -1):
-                    return None, data_index
-                val, _ = decode_constant(meta.data, base + data_index, code, self.version)
-                return val, None
+        pd = self._param_defaults_by_idx.get(param_index)
+        if pd is None:
+            return None, None
+        data_index = pd.get("dataIndex", -1)
+        if data_index < 0:
+            return None, None
+        base = meta._sec_off("fieldAndParameterDefaultValueData")
+        size = meta._sec_size("fieldAndParameterDefaultValueData")
+        if base <= 0 or data_index >= size:
+            return None, None
+        ti = pd.get("typeIndex", -1)
+        code = -1
+        if 0 <= ti < len(self.ctx.types):
+            code = self.ctx.types[ti].code
+        if code in (0x1D, 0x14, 0x15, -1):
+            return None, data_index
+        val, _ = decode_constant(meta.data, base + data_index, code, self.version)
+        return val, None
         return None, None
 
     def _render_value(self, bv: Optional[BlobValue]) -> str:

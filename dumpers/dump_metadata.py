@@ -531,6 +531,11 @@ class Metadata:
     def read_string(self, index: int) -> str:
         if index < 0:
             return ""
+        cache = getattr(self, "_string_cache", None)
+        if cache is not None:
+            v = cache.get(index)
+            if v is not None:
+                return v
         base = self._sec_off("string")
         size = self._sec_size("string")
         if base <= 0 or size <= 0 or index >= size:
@@ -540,9 +545,14 @@ class Metadata:
         if end == -1:
             end = min(pos + 512, base + size)
         try:
-            return self.data[pos:end].decode("utf-8", "replace")
+            v = self.data[pos:end].decode("utf-8", "replace")
         except Exception:
-            return ""
+            v = ""
+        if cache is None:
+            cache = {}
+            self._string_cache = cache
+        cache[index] = v
+        return v
 
     def read_all_strings(self) -> List[str]:
         """Iterate all null-terminated strings from the metadata strings section."""
