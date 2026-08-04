@@ -19,7 +19,7 @@ Usage:
     python3 dump_memory.py --pid 21231
     python3 dump_memory.py --package com.loadcomplete.minitales --size 0x1000000
 
-The decrypted metadata is dumped to ./likey_dump/global-metadata.decrypted.<va>.dat
+The decrypted metadata is dumped to DumpResult/<timestamp>/global-metadata.decrypted.<va>.dat
 """
 
 import argparse
@@ -372,7 +372,7 @@ def dump_binary(pid, maps, outdir):
     # ensure it's still a valid ELF
     if buf[:4] != b"\x7fELF":
         print("[-] dumped buffer is not a valid ELF (first bytes: %r)" % bytes(buf[:4]), file=sys.stderr)
-    outdir = outdir or "likey_dump"
+    outdir = outdir or "DumpResult"
     os.makedirs(outdir, exist_ok=True)
     fn = os.path.join(outdir, "libil2cpp.memorydump.so")
     with open(fn, "wb") as f:
