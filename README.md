@@ -50,11 +50,19 @@ The repo comes with pre-made directories for a clean workflow:
 
 ```
 il2cpp_dumper/
-├── apks/             ← drop .apk / .apkm / .xapk files here
-├── libs/             ← drop libil2cpp.so files here
-├── metadata/         ← drop global-metadata.dat files here
-└── DumpResult/       ← default output directory (auto-created)
+├── DumpPayload/        ← drop input files here (auto-discovered)
+│   ├── apk/            ← .apk / .apkm / .xapk files
+│   ├── lib/            ← libil2cpp.so
+│   └── metadata/       ← global-metadata.dat
+└── DumpResult/         ← default output directory (auto-created)
 ```
+
+When you run `python3 dumpers/dump_game.py` with **no arguments**, it
+automatically scans `DumpPayload/`:
+
+- If both `lib/libil2cpp.so` and `metadata/global-metadata.dat` are present,
+  they're used directly.
+- If an APK is in `apk/`, the dumper discovers the pair inside it.
 
 These are just conveniences — you can use any paths you like with `-b`, `-m`,
 `-g`, and `-o`.

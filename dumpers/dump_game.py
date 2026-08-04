@@ -2775,6 +2775,43 @@ def _find_pair_in_files(paths, tmpdir):
     return bpath, mpath
 
 
+# --------------------------------------------------------------------------
+# DumpPayload auto-discovery (no-arg convenience)
+# --------------------------------------------------------------------------
+
+PAYLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "DumpPayload")
+PAYLOAD_APK = os.path.join(PAYLOAD_DIR, "apk")
+PAYLOAD_LIB = os.path.join(PAYLOAD_DIR, "lib")
+PAYLOAD_META = os.path.join(PAYLOAD_DIR, "metadata")
+
+
+def _find_first(dirpath: str, extensions: Tuple[str, ...]) -> Optional[str]:
+    try:
+        for fn in sorted(os.listdir(dirpath)):
+            if fn.lower().endswith(extensions) and not fn.startswith("."):
+                return os.path.join(dirpath, fn)
+    except OSError:
+        pass
+    return None
+
+
+def _discover_payload() -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """Scan DumpPayload/ for input files; return (binary, metadata, cleanup_dir)."""
+    apk = _find_first(PAYLOAD_APK, (".apk", ".apkm", ".xapk", ".aab", ".zip"))
+    lib = _find_first(PAYLOAD_LIB, (".so",))
+    meta = _find_first(PAYLOAD_META, (".dat",))
+
+    if lib and meta:
+        print("[*] DumpPayload auto-discovery: binary=%s metadata=%s" % (lib, meta))
+        return lib, meta, None
+    if apk:
+        binary, metadata, cleanup = discover_game(apk)
+        if binary and metadata:
+            print("[*] DumpPayload auto-discovery: game=%s" % apk)
+        return binary, metadata, cleanup
+    return None, None, None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="IL2CPP binary dumper (research/testing tool).")
@@ -2840,7 +2877,12 @@ def main() -> int:
             return 1
         print("[+] discovered: binary=%s metadata=%s" % (binary_path, metadata_path))
     else:
-        ap.error("provide -g <game.apk|game_dir> or both -b <binary> and -m <metadata>")
+        # Auto-discover from DumpPayload/: if no explicit inputs, scan the
+        # standard input folders (DumpPayload/apk/, lib/, metadata/)
+        binary_path, metadata_path, cleanup_dir = _discover_payload()
+        if not (binary_path and metadata_path):
+            ap.error("provide -g <game.apk|game_dir> or -b <binary> -m <metadata>, "
+                     "or place files in DumpPayload/apk/ DumpPayload/lib/ DumpPayload/metadata/")
 
     try:
         return _run(args, binary_path, metadata_path)

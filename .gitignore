@@ -7,13 +7,13 @@ apk/
 likey_dump/
 samples/
 
-# Standard input directories — keep folders, ignore dropped files
-apks/*
-!apks/.gitkeep
-libs/*
-!libs/.gitkeep
-metadata/*
-!metadata/.gitkeep
+# Standard input directory — keep folders, ignore dropped files
+DumpPayload/apk/*
+!DumpPayload/apk/.gitkeep
+DumpPayload/lib/*
+!DumpPayload/lib/.gitkeep
+DumpPayload/metadata/*
+!DumpPayload/metadata/.gitkeep
 
 # Dump outputs (script.json / stringliteral.json / dump.cs land in -o dirs)
 DumpResult/*
