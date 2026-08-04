@@ -16,15 +16,22 @@ DumpPayload/metadata/*
 !DumpPayload/metadata/.gitkeep
 
 # Dump outputs (script.json / stringliteral.json / dump.cs land in -o dirs)
-DumpResult/*
+# Default runs write to DumpResult/<timestamp>/ — ignore the whole tree but keep .gitkeep
+DumpResult/
 !DumpResult/.gitkeep
+# Nested DumpResult anywhere in the tree (e.g. explicit -o paths)
+**/DumpResult/
+!**/DumpResult/.gitkeep
+# Individual dump outputs, wherever they land
+**/script.json
+**/stringliteral.json
+**/Strings.txt
+**/dump.cs
+**/DummyDll/
 out_*/
 dump.txt
 dump_xor.txt
 *.log
-script.json
-stringliteral.json
-dump.cs
 
 # Python cache / editor junk
 __pycache__/
