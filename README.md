@@ -165,6 +165,24 @@ If auto-detection picks the wrong version:
 python3 dump_game.py -b libil2cpp.so -m global-metadata.dat --version 39 -o out/
 ```
 
+### Probe a game's metadata version before downloading it (APK/APKM/XAPK)
+
+`apk_probe.py` reads the il2cpp metadata version from an APK/APKM/XAPK **download
+URL without downloading the whole file** (it uses HTTP Range requests to fetch
+just the ZIP central directory + the compressed `global-metadata.dat`, then
+inflates it). Great for hunting which version a game is before committing to a
+large download.
+
+```bash
+python3 apk_probe.py https://www.example.com/game.apk        # remote URL
+python3 apk_probe.py game.apkm                                # local file also works
+python3 apk_probe.py url1 url2 url3                           # probe many at once
+```
+
+Prints the metadata version (or why it failed). Map version → Unity era via
+`SAMPLES.md` (29=Unity2021, 31=Unity2022.1, 33=Unity2022.3, 35=Unity2023/Unity6,
+39=Unity6).
+
 ### Annotating a disassembler (IDA / Ghidra)
 
 After dumping, you can apply names/comments to the disassembly so functions show
@@ -269,6 +287,7 @@ python3 run_sweep.py        # 10/10 combinations should PASS
 dump_game.py            Main dumper: APK discovery, registration search, script.json + dump.cs
 dump_metadata.py        Standalone global-metadata.dat parser/renderer
 dump_memory.py          Rooted-device memory dumper (LIKEY / custom-encrypted games)
+apk_probe.py            Check a remote APK/APKM/XAPK's metadata version (no full download)
 likey_dump.py           (legacy) Frida-based metadata scanner
 ida_annotate.py         Apply names/comments to an IDA database from script.json
 ghidra_annotate.py      Apply names/comments to a Ghidra program from script.json
