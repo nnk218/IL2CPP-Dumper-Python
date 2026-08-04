@@ -41,8 +41,23 @@ dump-metadata -i global-metadata.dat -o dump.txt
 dump-memory --package com.example.game --dump-binary
 ```
 
-You can also run the scripts directly with `python3 dump_game.py ...` — both
+You can also run the scripts directly with `python3 dumpers/dump_game.py ...` — both
 styles are equivalent.
+
+## Standard directory layout
+
+The repo comes with pre-made directories for a clean workflow:
+
+```
+il2cpp_dumper/
+├── apks/             ← drop .apk / .apkm / .xapk files here
+├── libs/             ← drop libil2cpp.so files here
+├── metadata/         ← drop global-metadata.dat files here
+└── DumpResult/       ← default output directory (auto-created)
+```
+
+These are just conveniences — you can use any paths you like with `-b`, `-m`,
+`-g`, and `-o`.
 
 ---
 

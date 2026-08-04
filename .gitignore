@@ -5,8 +5,19 @@ other32-bit/
 ilmet/
 apk/
 likey_dump/
+samples/
+
+# Standard input directories — keep folders, ignore dropped files
+apks/*
+!apks/.gitkeep
+libs/*
+!libs/.gitkeep
+metadata/*
+!metadata/.gitkeep
 
 # Dump outputs (script.json / stringliteral.json / dump.cs land in -o dirs)
+DumpResult/*
+!DumpResult/.gitkeep
 out_*/
 dump.txt
 dump_xor.txt
@@ -47,6 +58,3 @@ global-metadata.decrypted.*.dat
 build/
 dist/
 *.egg-info/
-
-# Downloaded game APKs for version testing (large, proprietary)
-samples/

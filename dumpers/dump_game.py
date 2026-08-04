@@ -2785,7 +2785,7 @@ def main() -> int:
                                            "(overrides -g discovery)")
     ap.add_argument("-m", "--metadata", help="global-metadata.dat "
                                              "(overrides -g discovery)")
-    ap.add_argument("-o", "--output", default=".", help="output directory")
+    ap.add_argument("-o", "--output", default="DumpResult", help="output directory")
     ap.add_argument("--version", type=float, help="force il2cpp version override")
     ap.add_argument("--no-symbol", action="store_true",
                     help="skip symbol search (force scan-based lookup)")

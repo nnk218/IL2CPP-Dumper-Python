@@ -228,7 +228,7 @@ def main():
                     help="bytes to dump from the found header (default 0x1000000)")
     ap.add_argument("--dump-binary", action="store_true",
                     help="also dump libil2cpp.so from memory (relocations applied)")
-    ap.add_argument("--out", default="likey_dump", help="output directory")
+    ap.add_argument("--out", default="DumpResult", help="output directory")
     ap.add_argument("--scan-all", action="store_true",
                     help="also scan file-backed readable ranges, not just "
                          "anonymous/heap (slower, broader coverage)")
