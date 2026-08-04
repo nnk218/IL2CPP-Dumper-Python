@@ -70,9 +70,9 @@ Keep a note of which versions are validated. Current status:
 | 24.2 | validated (Subway Surfers 2.7.0) |
 | 24.4/24.5 | validated (Subway Surfers 2.30.0) |
 | 27 | validated (Subway Surfers 3.0.1) |
+| 29 | validated (Merge Decor, Royal Match) |
 | 31 | validated (Mini Tales) |
 | 39 | validated (two games) |
-| 29.0–29.1 | not yet |
 | 33 | not yet |
 | 35 | not yet |
 
