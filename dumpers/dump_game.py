@@ -2833,13 +2833,16 @@ def main() -> int:
                     help="skip symbol search (force scan-based lookup)")
     ap.add_argument("--xor-key", metavar="HEX",
                     help="repeating XOR key (hex) to decrypt protected metadata")
-    ap.add_argument("--dump-cs", action="store_true",
-                    help="also write a human-readable dump.cs")
+    ap.add_argument("--dump-cs", action="store_true", default=True,
+                    help="write a human-readable dump.cs (on by default; "
+                         "use --no-dump-cs to skip)")
+    ap.add_argument("--no-dump-cs", action="store_false", dest="dump_cs",
+                    help="skip dump.cs generation")
     ap.add_argument("--dump-attributes", action="store_true",
-                    help="with --dump-cs, render custom attributes "
-                         "([Attr(...)] lines) on types/members")
+                    help="render custom attributes ([Attr(...)] lines) on "
+                         "types/members in dump.cs and DummyDll")
     ap.add_argument("--dump-events", action="store_true",
-                    help="with --dump-cs, render events (add/remove/raise)")
+                    help="render events (add/remove/raise) in dump.cs and DummyDll")
     ap.add_argument("--dummy-dll", action="store_true", default=True,
                     help="generate compilable per-assembly C# stubs into "
                          "<output>/DummyDll/ (on by default; use --no-dummy-dll "

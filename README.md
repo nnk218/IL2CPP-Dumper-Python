@@ -103,14 +103,12 @@ After it finishes, `out/` contains:
 |---|---|
 | `script.json` | All methods, strings, type infos and addresses (for tools/scripts) |
 | `stringliteral.json` | String literals with their addresses |
-| `dump.cs` | Human-readable C# classes/methods (add `--dump-cs` to generate) |
+| `dump.cs` | Human-readable C# classes/methods |
+| `Strings.txt` | All metadata strings, one per line |
+| `DummyDll/` | Compilable per-assembly C# stubs (for IDE intellisense) |
 
-For a human-readable dump, run:
-
-```bash
-python3 dumpers/dump_game.py -g game.apk --dump-cs -o out/
-# -> produces out/dump.cs, a .cs file you can open in any text editor
-```
+A plain run produces all of the above; use `--no-dump-cs` / `--no-dummy-dll` to
+skip a piece if you only need part of the output.
 
 ---
 
@@ -287,7 +285,7 @@ Both scripts:
 | `-o, --output` | Output directory (default: a new `DumpResult/<timestamp>/` subfolder) |
 | `--version` | Force il2cpp version (e.g. `39`) |
 | `--xor-key HEX` | XOR key to decrypt protected metadata |
-| `--dump-cs` | Also write a human-readable `dump.cs` |
+| `--dump-cs` | Write a human-readable `dump.cs` (on by default; use `--no-dump-cs` to skip) |
 | `--dump-attributes` | Render custom attributes (`[Attr(...)]`) in dump.cs / DummyDll |
 | `--dump-events` | Render events in dump.cs / DummyDll |
 | `--dummy-dll` | Generate compilable per-assembly C# stubs into `<output>/DummyDll/` (on by default) |
@@ -355,7 +353,7 @@ python3 tests/run_sweep.py        # 10/10 combinations should PASS
 → Try `--version <n>` to force the metadata version.
 
 **dump.cs is missing**
-→ Add `--dump-cs` to the `dump_game.py` command.
+→ You likely used `--no-dump-cs` (it's on by default). Re-run without it.
 
 ---
 
