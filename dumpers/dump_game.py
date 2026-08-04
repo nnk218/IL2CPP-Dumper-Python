@@ -2862,11 +2862,13 @@ def main() -> int:
                     help="path to adb binary (default: search PATH + SDK dirs)")
     args = ap.parse_args()
 
-    # Default output: a fresh DumpResult/<timestamp>/ subfolder per run, so
-    # previous results are never overwritten. Explicit -o writes exactly there.
+    # Default output: a fresh <root>/DumpResult/<timestamp>/ subfolder per run,
+    # so previous results are never overwritten and the folder always lives at
+    # the project root (regardless of CWD). Explicit -o writes exactly there.
     if args.output is None:
         import datetime
-        base = os.path.join("DumpResult",
+        root_out = os.path.join(_root, "DumpResult")
+        base = os.path.join(root_out,
                             datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
         out = base
         n = 2

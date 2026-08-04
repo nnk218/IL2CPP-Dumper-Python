@@ -237,7 +237,9 @@ def main():
 
     if args.out is None:
         import datetime
-        base = os.path.join("DumpResult",
+        root_out = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "DumpResult")
+        base = os.path.join(root_out,
                             datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
         args.out = base
         n = 2
