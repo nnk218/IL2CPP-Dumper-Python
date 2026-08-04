@@ -40,3 +40,6 @@ global-metadata.decrypted.*.dat
 build/
 dist/
 *.egg-info/
+
+# Downloaded game APKs for version testing (large, proprietary)
+samples/

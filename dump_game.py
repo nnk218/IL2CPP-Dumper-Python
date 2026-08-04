@@ -221,6 +221,15 @@ class Binary:
     def data_scan_ranges(self) -> List[Tuple[int, int]]:
         raise NotImplementedError
 
+    def exec_scan_ranges(self) -> List[Tuple[int, int]]:
+        return []
+
+    def va_data_ranges(self) -> List[Tuple[int, int]]:
+        return self.data_scan_ranges()
+
+    def va_exec_ranges(self) -> List[Tuple[int, int]]:
+        return self.exec_scan_ranges()
+
 
 class ElfBinary(Binary):
     """Shared ELF logic; program/section headers are parsed by the subclass."""
@@ -247,6 +256,36 @@ class ElfBinary(Binary):
             # PF_R(4)|PF_W(2) => data; PF_R|PF_X(1) => exec
             if p["flags"] in (2, 4, 6):
                 ranges.append((p["offset"], p["offset"] + p["filesz"]))
+        return ranges
+
+    def exec_scan_ranges(self) -> List[Tuple[int, int]]:
+        ranges = []
+        for p in self.phdrs:
+            if p["type"] != 1 or p["filesz"] == 0:
+                continue
+            if p["flags"] in (1, 3, 5, 7):  # PF_X combinations
+                ranges.append((p["offset"], p["offset"] + p["filesz"]))
+        return ranges
+
+    def va_data_ranges(self) -> List[Tuple[int, int]]:
+        """VA ranges of writable/read data segments, including BSS (memsz).
+        Used for pointer-in-range checks where the reference uses
+        addressEnd = p_vaddr + p_memsz (the zero-filled tail counts)."""
+        ranges = []
+        for p in self.phdrs:
+            if p["type"] != 1 or p["memsz"] == 0:
+                continue
+            if p["flags"] in (2, 4, 6):
+                ranges.append((p["vaddr"], p["vaddr"] + p["memsz"]))
+        return ranges
+
+    def va_exec_ranges(self) -> List[Tuple[int, int]]:
+        ranges = []
+        for p in self.phdrs:
+            if p["type"] != 1 or p["memsz"] == 0:
+                continue
+            if p["flags"] in (1, 3, 5, 7):
+                ranges.append((p["vaddr"], p["vaddr"] + p["memsz"]))
         return ranges
 
     def read_symtable(self) -> List[Tuple[str, int]]:
@@ -514,6 +553,17 @@ class PEBinary(Binary):
                 ranges.append((s["raw_ptr"], s["raw_ptr"] + s["raw_size"]))
         return ranges
 
+    def va_data_ranges(self) -> List[Tuple[int, int]]:
+        out = []
+        for s in self.sections:
+            if s["raw_size"] and (s["characteristics"] & 0x20000000) == 0:
+                out.append((self.image_base + s["virtual_address"],
+                            self.image_base + s["virtual_address"] + s["virtual_size"]))
+        return out
+
+    def va_exec_ranges(self) -> List[Tuple[int, int]]:
+        return self.va_data_ranges()
+
     def symbol_search(self) -> Tuple[int, int]:
         code_reg = meta_reg = 0
         if not self.export_rva:
@@ -540,12 +590,14 @@ class PEBinary(Binary):
 # --------------------------------------------------------------------------
 
 class SectionHelper:
-    def __init__(self, bin: Binary, version, method_count, type_defs_count, image_count):
+    def __init__(self, bin: Binary, version, method_count, type_defs_count, image_count,
+                 metadata_usages_count: int = 0):
         self.bin = bin
         self.version = version
         self.method_count = method_count
         self.type_defs_count = type_defs_count
         self.image_count = image_count
+        self.metadata_usages_count = metadata_usages_count
         self._ref_index: Optional[Dict[int, List[int]]] = None
         self._progress = None  # optional callable(frac) for scan progress
 
@@ -569,10 +621,48 @@ class SectionHelper:
         return self._ref_index.get(addr, [])
 
     def find_code_registration(self) -> int:
+        if self.version < 24.2:
+            return self._find_code_registration_old()
+        # Reference (SectionHelper): for ELF, search EXEC sections first, then
+        # DATA. Older games may keep the mscorlib.dll string in the text segment.
+        for ranges in (self.bin.exec_scan_ranges(), self.bin.data_scan_ranges()):
+            found = self._find_code_registration_in(ranges)
+            if found:
+                return found
+        return 0
+
+    def _find_code_registration_old(self) -> int:
+        """Reference FindCodeRegistrationOld (v<24.2): scan data for a slot
+        holding methodCount; the pointer in the next slot points to an array of
+        methodCount method pointers all in the exec range."""
+        ptr = self.bin.ptr
+        fmt_i = "q" if ptr == 8 else "i"
+        fmt_u = "Q" if ptr == 8 else "I"
+        data_ranges = self.bin.data_scan_ranges()
+        exec_ranges = self.bin.va_exec_ranges() or data_ranges
+        for off, end in data_ranges:
+            pos = off
+            last = min(end, len(self.bin.data)) - ptr
+            while pos < last:
+                v = struct.unpack_from("<" + fmt_i, self.bin.data, pos)[0]
+                if v == self.method_count:
+                    pva = struct.unpack_from("<" + fmt_u, self.bin.data, pos + ptr)[0]
+                    poff = self.bin.map_va_to_off(pva)
+                    if poff is not None and any(a <= poff <= b for a, b in data_ranges):
+                        if poff + ptr * self.method_count <= len(self.bin.data):
+                            ptrs = list(struct.unpack_from(
+                                "<%d%s" % (self.method_count, "Q" if ptr == 8 else "I"),
+                                self.bin.data, poff))
+                            if all(any(a <= x <= b for a, b in exec_ranges) for x in ptrs):
+                                return self.bin.map_off_to_va(pos)
+                pos += ptr
+        return 0
+
+    def _find_code_registration_in(self, ranges) -> int:
         ptr = self.bin.ptr
         fmt = "q" if ptr == 8 else "i"
         feature = b"mscorlib.dll\x00"
-        for off, end in self.bin.data_scan_ranges():
+        for off, end in ranges:
             buf = self.bin.data[off:end]
             idx = 0
             while True:
@@ -601,7 +691,7 @@ class SectionHelper:
 
     def find_metadata_registration(self) -> int:
         if self.version < 27:
-            return 0
+            return self._find_metadata_registration_old()
         ptr = self.bin.ptr
         fmt_i = "q" if ptr == 8 else "i"
         fmt_u = "Q" if ptr == 8 else "I"
@@ -621,6 +711,34 @@ class SectionHelper:
                         poff = self.bin.map_va_to_off(pva)
                         if poff is not None and poff + ptr * self.type_defs_count <= len(self.bin.data):
                             return self.bin.map_off_to_va(pos - 10 * ptr)
+                pos += ptr
+        return 0
+
+    def _find_metadata_registration_old(self) -> int:
+        """Reference FindMetadataRegistrationOld (v<27): scan data for a slot
+        holding typeDefinitionsCount; the pointer 3 slots later points to the
+        metadataUsages array; all metadataUsagesCount entries must be in BSS."""
+        ptr = self.bin.ptr
+        fmt_i = "q" if ptr == 8 else "i"
+        fmt_u = "Q" if ptr == 8 else "I"
+        data_ranges = self.bin.data_scan_ranges()
+        bss_ranges = self.bin.va_data_ranges()  # pointer targets include BSS (memsz)
+        for off, end in data_ranges:
+            pos = off
+            last = min(end, len(self.bin.data)) - ptr
+            while pos < last:
+                v = struct.unpack_from("<" + fmt_i, self.bin.data, pos)[0]
+                if v == self.type_defs_count:
+                    pva = struct.unpack_from("<" + fmt_u, self.bin.data, pos + 3 * ptr)[0]
+                    poff = self.bin.map_va_to_off(pva)
+                    if poff is not None and any(a <= poff <= b for a, b in data_ranges):
+                        if poff + ptr * self.metadata_usages_count <= len(self.bin.data):
+                            ptrs = list(struct.unpack_from(
+                                "<%d%s" % (self.metadata_usages_count,
+                                           "Q" if ptr == 8 else "I"),
+                                self.bin.data, poff))
+                            if all(any(a <= x <= b for a, b in bss_ranges) for x in ptrs):
+                                return self.bin.map_off_to_va(pos - 12 * ptr)
                 pos += ptr
         return 0
 
@@ -690,6 +808,8 @@ class Il2CppContext:
         self.field_offset_ptrs: List[int] = []      # per-typeDef ptr to int32[] field offsets (v>21)
         self.field_offsets_are_pointers = False
         self.meta_reg_va: int = 0
+        self.metadata_usages: List[int] = []
+        self.custom_attribute_generators: List[int] = []
 
     # -- low-level reads ---------------------------------------------------
     def read_type(self, va: int) -> Optional[Il2CppTypeInfo]:
@@ -911,6 +1031,17 @@ def auto_plus_init(bin: Binary, meta: Metadata, version, code_reg, meta_reg):
             if code.get("reversePInvokeWrapperCount", 0) > limit:
                 version = 27.1
                 code_reg -= ptr
+        if version == 24.4:
+            code_reg -= ptr * 2
+            code = read_struct(bin.data, bin.map_va_to_off(code_reg), CODE_REG_SPEC, version, ptr)
+            if code.get("reversePInvokeWrapperCount", 0) > limit:
+                version = 24.5
+                code_reg -= ptr
+        if version == 24.2:
+            code = read_struct(bin.data, bin.map_va_to_off(code_reg), CODE_REG_SPEC, version, ptr)
+            if code.get("interopDataCount", 0) == 0:
+                version = 24.3
+                code_reg -= ptr * 2
     return version, code_reg, meta_reg
 
 
@@ -931,10 +1062,22 @@ def init(ctx: Il2CppContext, bin: Binary, version, code_reg, meta_reg) -> bool:
     if code.get("unresolvedVirtualCallPointers", 0):
         ctx.unresolved_virtual_call_pointers = bin.read_ptr_array(
             code["unresolvedVirtualCallPointers"], code.get("unresolvedVirtualCallCount", 0))
+    if version < 27 and code.get("customAttributeGenerators", 0):
+        ctx.custom_attribute_generators = bin.read_ptr_array(
+            code["customAttributeGenerators"], code.get("customAttributeCount", 0))
 
     # types: array of pointers to Il2CppType structs
     ptypes = bin.read_ptr_array(meta_reg_fields.get("types", 0), meta_reg_fields.get("typesCount", 0))
     ctx.types = [t for t in (ctx.read_type(p) for p in ptypes) if t is not None]
+
+    # metadataUsages array (v19+): VA slots for type/method/string usage entries.
+    # The reference sizes this with metadata.metadataUsagesCount = max
+    # destinationIndex+1 (which can exceed the struct's own count field).
+    mu_ptr = meta_reg_fields.get("metadataUsages", 0)
+    mu_count = meta_reg_fields.get("metadataUsagesCount", 0)
+    if ctx.meta.usage_pairs:
+        mu_count = max(p["destinationIndex"] for p in ctx.meta.usage_pairs) + 1
+    ctx.metadata_usages = bin.read_ptr_array(mu_ptr, mu_count)
 
     # field offsets (v>21: array of pointers to int32[] per typeDef)
     fo_ptr = meta_reg_fields.get("fieldOffsets", 0)
@@ -949,6 +1092,7 @@ def init(ctx: Il2CppContext, bin: Binary, version, code_reg, meta_reg) -> bool:
     # codeGenModules (v24.2+) -> per-image method pointers
     if version >= 24.2:
         pmodules = bin.read_ptr_array(code.get("codeGenModules", 0), code.get("codeGenModulesCount", 0))
+        codegen_by_name = {}
         for pm in pmodules:
             m = bin.read_fields(pm, CODE_GEN_MODULE_SPEC)
             if m is None:
@@ -958,6 +1102,26 @@ def init(ctx: Il2CppContext, bin: Binary, version, code_reg, meta_reg) -> bool:
             ptrs = bin.read_ptr_array(m.get("methodPointers", 0), mpc)
             if name:
                 ctx.method_pointers[name] = ptrs
+                codegen_by_name[name] = m
+        # v27-27.2: custom attribute generators come from each image's
+        # codeGenModule.customAttributeCacheGenerator (reference executor)
+        if 27 <= version < 29:
+            total = sum(img.get("customAttributeCount", 0) for img in ctx.meta.images)
+            gens = [0] * total
+            for img in ctx.meta.images:
+                iname = ctx.meta.read_string(img.get("nameIndex", -1))
+                m = codegen_by_name.get(iname)
+                if not m or not m.get("customAttributeCacheGenerator", 0):
+                    continue
+                cnt = img.get("customAttributeCount", 0)
+                if cnt <= 0:
+                    continue
+                ptrs = bin.read_ptr_array(m["customAttributeCacheGenerator"], cnt)
+                start = img.get("customAttributeStart", 0)
+                for k in range(min(cnt, len(gens) - start)):
+                    if start + k >= 0:
+                        gens[start + k] = ptrs[k]
+            ctx.custom_attribute_generators = gens
 
     # generic insts
     pgis = bin.read_ptr_array(meta_reg_fields.get("genericInsts", 0),
@@ -979,7 +1143,8 @@ def init(ctx: Il2CppContext, bin: Binary, version, code_reg, meta_reg) -> bool:
     # generic method table -> methodSpec generic pointers
     gmt = meta_reg_fields.get("genericMethodTable", 0)
     gmtc = meta_reg_fields.get("genericMethodTableCount", 0)
-    ent = 16 if version >= 27.1 else 12
+    # entry size: Il2CppGenericMethodIndices gains adjustorThunk at 24.5 and 27.1+
+    ent = 16 if version == 24.5 or version >= 27.1 else 12
     for i in range(gmtc):
         off = bin.map_va_to_off(gmt + ent * i)
         if off is None or off + ent > len(bin.data):
@@ -1052,12 +1217,14 @@ def build_script(ctx: Il2CppContext, bin: Binary, meta: Metadata, version) -> Di
     ordered.extend(ctx.invoker_pointers)
     ordered.extend(ctx.reverse_pinvoke_wrappers)
     ordered.extend(ctx.unresolved_virtual_call_pointers)
+    if version < 29:
+        ordered.extend(ctx.custom_attribute_generators)
     ordered = sorted(set(ordered) - {0})
     json_out["Addresses"] = [bin.get_rva(p) for p in ordered]
 
-    # metadata usage scan (v27+)
-    if version >= 27:
-        scan_metadata_usage(ctx, bin, meta, json_out)
+    # metadata usage scan: v27+ scans the binary for encoded tokens; 16<v<27
+    # uses the metadata's usage lists/pairs + the binary metadataUsages array.
+    scan_metadata_usage(ctx, bin, meta, json_out, version)
 
     return json_out
 
@@ -1653,7 +1820,8 @@ def generate_dump_cs(ctx: Il2CppContext, bin: Binary, meta: Metadata, version: f
     return gen.generate(config)
 
 
-def scan_metadata_usage(ctx: Il2CppContext, bin: Binary, meta: Metadata, json_out: Dict):
+def scan_metadata_usage(ctx: Il2CppContext, bin: Binary, meta: Metadata, json_out: Dict,
+                        version: float):
     def add_type_info(idx, slot_rva):
         if 0 <= idx < len(ctx.types):
             t = ctx.types[idx]
@@ -1729,6 +1897,10 @@ def scan_metadata_usage(ctx: Il2CppContext, bin: Binary, meta: Metadata, json_ou
     handlers = {1: add_type_info, 2: add_type_var, 3: add_method_def,
                 4: add_field_info, 5: add_string_literal, 6: add_method_ref}
 
+    if version < 27:
+        _scan_usage_old(ctx, bin, meta, json_out, handlers)
+        return
+
     for off, end in bin.data_scan_ranges():
         last = min(end, len(bin.data)) - bin.ptr
         pos = off
@@ -1744,6 +1916,32 @@ def scan_metadata_usage(ctx: Il2CppContext, bin: Binary, meta: Metadata, json_ou
                     if slot_rva > 0:
                         handlers[usage](decoded, slot_rva)
             pos += bin.ptr
+
+
+def _scan_usage_old(ctx: Il2CppContext, bin: Binary, meta: Metadata, json_out: Dict,
+                    handlers: Dict[int, callable]):
+    """v<27 metadata usage: iterate the metadata's usage lists/pairs and map
+    each destinationIndex through the binary's metadataUsages slot array."""
+    # build usage dic: (usage kind) -> {destinationIndex: decodedIndex}
+    usage_dic: Dict[int, Dict[int, int]] = {}
+    for start, count in meta.usage_lists:
+        for i in range(count):
+            off = start + i
+            if 0 <= off < len(meta.usage_pairs):
+                pair = meta.usage_pairs[off]
+                usage = (pair["encodedSourceIndex"] & 0xE0000000) >> 29
+                decoded = (pair["encodedSourceIndex"] & 0x1FFFFFFE) >> 1
+                if 1 <= usage <= 6:
+                    usage_dic.setdefault(usage, {})[pair["destinationIndex"]] = decoded
+    for usage, entries in usage_dic.items():
+        fn = handlers.get(usage)
+        if fn is None:
+            continue
+        for dst, decoded in entries.items():
+            if 0 <= dst < len(ctx.metadata_usages):
+                slot_va = ctx.metadata_usages[dst]
+                if slot_va > 0:
+                    fn(decoded, bin.get_rva(slot_va))
 
 
 # --------------------------------------------------------------------------
@@ -1969,7 +2167,11 @@ def _run(args, binary_path: str, metadata_path: str) -> int:
                   % (code_reg, meta_reg))
     if not (code_reg and meta_reg):
         print("[*] symbol search failed, running section scan...")
-        sh = SectionHelper(bin, version, len(meta.methods), len(meta.type_defs), len(meta.images))
+        mu_count = 0
+        if meta.usage_pairs:
+            mu_count = max(p["destinationIndex"] for p in meta.usage_pairs) + 1
+        sh = SectionHelper(bin, version, len(meta.methods), len(meta.type_defs), len(meta.images),
+                           mu_count)
         last_pct = -5
 
         def _progress(frac):

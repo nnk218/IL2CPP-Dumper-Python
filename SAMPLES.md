@@ -67,10 +67,11 @@ Keep a note of which versions are validated. Current status:
 
 | Version | Status |
 |---|---|
+| 24.2 | validated (Subway Surfers 2.7.0) |
+| 24.4/24.5 | validated (Subway Surfers 2.30.0) |
+| 27 | validated (Subway Surfers 3.0.1) |
 | 31 | validated (Mini Tales) |
 | 39 | validated (two games) |
-| 24.0–24.5 | not yet |
-| 27.0–27.2 | not yet |
 | 29.0–29.1 | not yet |
 | 33 | not yet |
 | 35 | not yet |

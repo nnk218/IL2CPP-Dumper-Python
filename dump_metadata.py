@@ -203,6 +203,11 @@ def parse_header(data: bytes, version: Optional[int]) -> Dict[str, int]:
         for i, name in enumerate(V38_SECTIONS):
             out["_sections"][name] = struct.unpack_from("<III", data, 8 + i * 12)
         return out
+    # v24 refinement must happen BEFORE building the field list: for raw
+    # version 24 the header still contains rgctxEntries (Max 24.1) unless the
+    # structure marks it 24.2 (stringLiteralOffset==264). Refining first keeps
+    # the field offsets aligned with the reference's Version gating.
+    ver = _refine_version(data, ver)
     fields = header_fields(ver)
     if len(data) < len(fields) * 4:
         raise MetaError("file too small for v%d header (%d bytes)" % (ver, len(fields) * 4))
@@ -211,6 +216,59 @@ def parse_header(data: bytes, version: Optional[int]) -> Dict[str, int]:
         out[name] = struct.unpack_from("<I", data, i * 4)[0]
     out["_version"] = ver
     return out
+
+
+def _refine_version(data: bytes, ver: int) -> float:
+    """v24 refinements (mirror Il2CppDumper Metadata.cs:69-131)."""
+    if ver == 24:
+        string_lit_off = struct.unpack_from("<I", data, 8)[0]
+        if string_lit_off == 264:
+            ver = 24.2
+        else:
+            # header still in 24.0 layout (has rgctxEntries): images follow
+            # typeDefinitions directly; read image tokens to test 24.1
+            fields = header_fields(24.0)
+            out = {}
+            for i, name in enumerate(fields):
+                if i * 4 + 4 <= len(data):
+                    out[name] = struct.unpack_from("<I", data, i * 4)[0]
+            img_count = out.get("imagesSize", 0) // image_size(24)
+            if any(t != 1 for t in _image_tokens(data, out.get("imagesOffset", 0), img_count)):
+                ver = 24.1
+    if ver == 24.2:
+        fields = header_fields(24.2)
+        out = {}
+        for i, name in enumerate(fields):
+            if i * 4 + 4 <= len(data):
+                out[name] = struct.unpack_from("<I", data, i * 4)[0]
+        img_count = out.get("imagesSize", 0) // image_size(24.2)
+        if out.get("assembliesSize", 0) // 68 < img_count:
+            ver = 24.4
+    elif ver == 24.1:
+        fields = header_fields(24.1)
+        out = {}
+        for i, name in enumerate(fields):
+            if i * 4 + 4 <= len(data):
+                out[name] = struct.unpack_from("<I", data, i * 4)[0]
+        img_count = out.get("imagesSize", 0) // image_size(24.1)
+        if out.get("assembliesSize", 0) // 64 == img_count:
+            ver = 24.4
+    return ver
+
+
+def _image_tokens(data: bytes, offset: int, count: int) -> List[int]:
+    """Read the token field of the first few Il2CppImageDefinition entries."""
+    toks = []
+    layout = image_layout(24)
+    token_idx = layout.index("token") if "token" in layout else -1
+    if token_idx < 0:
+        return toks
+    tok_off = token_idx * 4
+    for i in range(min(count, 8)):
+        base = offset + i * image_size(24)
+        if base + tok_off + 4 <= len(data):
+            toks.append(struct.unpack_from("<I", data, base + tok_off)[0])
+    return toks
 
 
 # --------------------------------------------------------------------------
@@ -846,8 +904,7 @@ class Metadata:
                 if rec is None:
                     break
                 start, count = rec
-                self.usage_lists.append(self._ints(mpo + start * 8, count)
-                                        if start >= 0 else [])
+                self.usage_lists.append((start, count))
         for i in range(self._count("metadataUsagePairs")):
             rec = self._rd("II", mpo + i * 8)
             if rec is None:
