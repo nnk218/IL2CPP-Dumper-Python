@@ -2840,9 +2840,14 @@ def main() -> int:
                          "([Attr(...)] lines) on types/members")
     ap.add_argument("--dump-events", action="store_true",
                     help="with --dump-cs, render events (add/remove/raise)")
-    ap.add_argument("--dummy-dll", metavar="DIR",
-                    help="generate compilable per-assembly C# stubs into DIR "
-                         "(methods have throw-null bodies, usable for IDE intellisense)")
+    ap.add_argument("--dummy-dll", action="store_true", default=True,
+                    help="generate compilable per-assembly C# stubs into "
+                         "<output>/DummyDll/ (on by default; use --no-dummy-dll "
+                         "to skip)")
+    ap.add_argument("--no-dummy-dll", action="store_false", dest="dummy_dll",
+                    help="skip DummyDll generation")
+    ap.add_argument("--dummy-dll-dir", metavar="DIR",
+                    help="DummyDll output folder (default: <output>/DummyDll)")
     ap.add_argument("--version-only", action="store_true",
                     help="just print the metadata version and exit (quick sample check)")
     ap.add_argument("--device", action="store_true",
@@ -3024,8 +3029,8 @@ def _run(args, binary_path: str, metadata_path: str) -> int:
         with open(os.path.join(args.output, "dump.cs"), "w", encoding="utf-8") as f:
             f.write(cs)
         print("[+] wrote %s (%d bytes)" % (os.path.join(args.output, "dump.cs"), len(cs)))
-    if args.dummy_dll:
-        ddir = args.dummy_dll
+    if getattr(args, "dummy_dll", True):
+        ddir = args.dummy_dll_dir or os.path.join(args.output, "DummyDll")
         da = bool(getattr(args, "dump_attributes", False))
         de = bool(getattr(args, "dump_events", False))
         generate_dummy_dll(ctx, bin, meta, version, ddir, da, de)

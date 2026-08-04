@@ -288,6 +288,11 @@ Both scripts:
 | `--version` | Force il2cpp version (e.g. `39`) |
 | `--xor-key HEX` | XOR key to decrypt protected metadata |
 | `--dump-cs` | Also write a human-readable `dump.cs` |
+| `--dump-attributes` | Render custom attributes (`[Attr(...)]`) in dump.cs / DummyDll |
+| `--dump-events` | Render events in dump.cs / DummyDll |
+| `--dummy-dll` | Generate compilable per-assembly C# stubs into `<output>/DummyDll/` (on by default) |
+| `--no-dummy-dll` | Skip DummyDll generation |
+| `--dummy-dll-dir DIR` | DummyDll output folder (default: `<output>/DummyDll`) |
 | `--no-symbol` | Skip symbol search (force the scan-based lookup) |
 | `--device` | Pull the game from a connected rooted device (needs `--package`) |
 | `--package PKG` | Game package name (with `--device`) |
