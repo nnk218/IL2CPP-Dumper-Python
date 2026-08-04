@@ -16,8 +16,8 @@ jobs:
           python-version: "3.10"
       - name: build fixtures
         run: |
-          python make_test_metadata.py
-          python make_test_elf.py --bits 64
-          python make_test_elf.py --bits 32
+          python tests/make_test_metadata.py
+          python tests/make_test_elf.py --bits 64
+          python tests/make_test_elf.py --bits 32
       - name: sweep
-        run: python run_sweep.py
+        run: python tests/run_sweep.py
