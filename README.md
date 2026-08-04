@@ -79,7 +79,6 @@ IL2CPP-Dumper-Python/
 ├── tools/          utilities
 │   ├── apk_probe.py          probe a remote APK's metadata version (no download)
 │   ├── apkm_scrape.py        APKMirror download-chain scraper
-│   ├── emulator_dump.py      run dump_memory.py against an emulator (Waydroid, etc.)
 │   ├── ida_annotate.py       apply names/comments in IDA
 │   └── ghidra_annotate.py    apply names/comments in Ghidra
 ├── tests/          synthetic fixtures + regression sweep
