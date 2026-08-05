@@ -85,7 +85,7 @@ the fallback if profiling complains.
 | Phase | Port | Gate |
 |---|---|---|
 | 1 | Harness: `parser/` module + JVM test rig; fixture pairs; golden-file generator | `./gradlew test` runs on PC |
-| 2 | `Metadata.kt`: header + version refinement (24.1/24.5/27.2/31...), element-size map, all tables, `read_string` | deep-equal vs oracle `render_text`; table counts |
+| 2 | `Metadata.kt`: header + version refinement (24.1/24.5/27.2/31...), element-size map, all tables, `read_string` | **DONE** (android `f78572c`): `dump_metadata.py --fingerprint` -> `fingerprint.txt`; `MetadataConformanceTest` byte-diff |
 | 3 | `Elf.kt`: headers, VA map, **relocations**, `symbol_search`, scan ranges | symbol_search hits on Undying Hero on-disk lib; relocation sanity on Mini Tales memory dump |
 | 4 | `SectionHelper` + `Context` + `init` + `BuildScript` -> `script.json` | semantic deep-equal of `script.json` + known counts (214,588) |
 | 5 | `DumpCs.kt` -> `dump.cs` | byte-identical `dump.cs` |
@@ -105,6 +105,8 @@ the fallback if profiling complains.
   segment, so it is never mapped). The oracle now guards the shdr parse
   (`dump_game.py` Elf64/Elf32); symbol search degrades to the section scan. The
   Kotlin `Elf.kt` MUST do the same or it will crash on exactly these fixtures.
+  Phase 2 hit a parallel bug: Kotlin method rows were strided by the *typeDef*
+  size; the fingerprint gate caught it immediately.
 - Version sub-numbers must stay `Double` comparisons identical to Python
   (`24.2`, `27.1`, `27.2`, `29`, `31`, `35`).
 - Endianness: all `<` (LE) via `ByteBuffer` LITTLE_ENDIAN.
