@@ -18,6 +18,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import struct
 import sys
@@ -47,6 +48,22 @@ V38_SECTIONS = [
     "referencedAssemblies", "attributeData", "attributeDataRanges",
     "unresolvedIndirectCallParameterTypes",
     "unresolvedIndirectCallParameterRanges",
+    "windowsRuntimeTypeNames", "windowsRuntimeStrings",
+    "exportedTypeDefinitions",
+]
+
+
+FINGERPRINT_TABLES = [
+    "stringLiteral", "stringLiteralData", "string", "events", "properties",
+    "methods", "parameterDefaultValues", "fieldDefaultValues",
+    "fieldAndParameterDefaultValueData", "fieldMarshaledSizes",
+    "parameters", "fields", "genericParameters", "genericParameterConstraints",
+    "genericContainers", "nestedTypes", "interfaces", "vtableMethods",
+    "interfaceOffsets", "typeDefinitions", "rgctxEntries", "images",
+    "assemblies", "metadataUsageLists", "metadataUsagePairs", "fieldRefs",
+    "referencedAssemblies", "attributesInfo", "attributeTypes",
+    "attributeData", "attributeDataRange",
+    "unresolvedVirtualCallParameterTypes", "unresolvedVirtualCallParameterRanges",
     "windowsRuntimeTypeNames", "windowsRuntimeStrings",
     "exportedTypeDefinitions",
 ]
@@ -1291,6 +1308,56 @@ class Metadata:
             "metadata_usage_pairs": self.usage_pairs,
         }
 
+    def fingerprint(self) -> List[str]:
+        """Canonical conformance fingerprint (key<TAB>value lines).
+
+        Mirrors Metadata.kt::fingerprint() on the Android side so the JVM test
+        harness can verify the Kotlin parser decodes identical tables/rows to
+        this reference implementation. Digests are sha256 over a canonical
+        text projection; a mismatch means a layout or decode difference."""
+        v = self.version
+
+        def canon(rows: List[Dict], keys: List[str]) -> str:
+            return "\n".join(",".join(str(r.get(k, 0)) for k in keys) for r in rows)
+
+        def sha(s: str) -> str:
+            return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+        lines = ["version\t%d" % v]
+        for name in header_fields(int(v)):
+            lines.append("header.%s\t%d" % (name, self.header.get(name, 0)))
+        for t in FINGERPRINT_TABLES:
+            lines.append("count.%s\t%d" % (t, self._count(t)))
+        lines.append("digest.strings\t%s" % sha("\x00".join(self.strings)))
+        lines.append("digest.stringLiterals\t%s" % sha("\x00".join(self.string_literals)))
+        lines.append("digest.typeDefs\t%s" % sha(canon(self.type_defs, type_def_layout(v))))
+        lines.append("digest.methods\t%s" % sha(canon(self.methods, method_def_layout(v))))
+        lines.append("digest.fields\t%s" % sha(canon(self.fields, ["nameIndex", "typeIndex", "token"])))
+        lines.append("digest.params\t%s" % sha(canon(self.params, ["nameIndex", "token", "typeIndex"])))
+        if v >= 24.1:
+            p_keys = ["nameIndex", "get", "set", "attrs", "token"]
+            e_keys = ["nameIndex", "typeIndex", "add", "remove", "raise", "token"]
+            a_keys = ["imageIndex", "token", "referencedAssemblyStart", "referencedAssemblyCount"]
+        else:
+            p_keys = ["nameIndex", "get", "set", "attrs", "customAttributeIndex", "token"]
+            e_keys = ["nameIndex", "typeIndex", "add", "remove", "raise",
+                      "customAttributeIndex", "token"]
+            a_keys = ["imageIndex", "referencedAssemblyStart", "referencedAssemblyCount"]
+        lines.append("digest.properties\t%s" % sha(canon(self.properties, p_keys)))
+        lines.append("digest.events\t%s" % sha(canon(self.events, e_keys)))
+        lines.append("digest.genericParams\t%s" % sha(canon(self.generic_params,
+                     ["ownerIndex", "nameIndex", "constraintsStart", "constraintsCount",
+                      "num", "flags"])))
+        lines.append("digest.genericContainers\t%s" % sha(canon(self.generic_containers,
+                     ["ownerIndex", "type_argc", "is_method", "genericParameterStart"])))
+        lines.append("digest.interfaceOffsets\t%s" % sha(canon(self.interface_offsets,
+                     ["interfaceTypeIndex", "offset"])))
+        lines.append("digest.images\t%s" % sha(canon(self.images, image_layout(v))))
+        lines.append("digest.assemblies\t%s" % sha(canon(self.assemblies, a_keys)))
+        lines.append("digest.nestedTypes\t%s" % sha(
+            "\n".join(str(x) for x in self.nested_types)))
+        return lines
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(
@@ -1305,6 +1372,8 @@ def main() -> int:
                     help="override auto-detected Il2CppType region start (for real files with padding)")
     ap.add_argument("--json", action="store_true", help="also write <output>.json dump")
     ap.add_argument("--strings", action="store_true", help="include string literal/string tables in dump")
+    ap.add_argument("--fingerprint", action="store_true",
+                    help="write canonical conformance fingerprint instead of text dump")
     args = ap.parse_args()
 
     with open(args.input, "rb") as f:
@@ -1342,6 +1411,14 @@ def main() -> int:
                       file=sys.stderr)
                 print("      python3 dump_memory.py --package <game> --dump-binary", file=sys.stderr)
                 return 1
+
+    if args.fingerprint:
+        if args.output:
+            with open(args.output, "w", encoding="utf-8") as f:
+                f.write("\n".join(meta.fingerprint()) + "\n")
+        else:
+            print("\n".join(meta.fingerprint()))
+        return 0
 
     text = meta.render_text(include_strings=args.strings)
     if protected:
