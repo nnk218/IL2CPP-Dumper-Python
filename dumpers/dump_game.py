@@ -355,6 +355,8 @@ class Elf64Binary(ElfBinary):
         self.shdrs = []
         if e_shoff and e_shnum:
             for i in range(e_shnum):
+                if e_shoff + (i + 1) * e_shentsize > len(data):
+                    break  # memory dumps: shdr table may live past the dump
                 s = struct.unpack_from("<IIQQQQIIQQ", data, e_shoff + i * e_shentsize)
                 self.shdrs.append({
                     "name": s[0], "type": s[1], "flags": s[2], "addr": s[3],
@@ -483,6 +485,8 @@ class Elf32Binary(ElfBinary):
         self.shdrs = []
         if e_shoff and e_shnum:
             for i in range(e_shnum):
+                if e_shoff + (i + 1) * e_shentsize > len(data):
+                    break  # memory dumps: shdr table may live past the dump
                 s = struct.unpack_from("<IIIIIIIIII", data, e_shoff + i * e_shentsize)
                 self.shdrs.append({
                     "name": s[0], "type": s[1], "flags": s[2], "addr": s[3],

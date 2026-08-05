@@ -101,6 +101,10 @@ the fallback if profiling complains.
   insertion order) for byte-identical `script.json` -> dedicated `JsonWriter.kt`.
 - `find_reference` memory: consider `LongLongHashMap` if the plain HashMap is too
   heavy on-device.
+- Memory dumps lack the section-header table (it lives past the last PT_LOAD
+  segment, so it is never mapped). The oracle now guards the shdr parse
+  (`dump_game.py` Elf64/Elf32); symbol search degrades to the section scan. The
+  Kotlin `Elf.kt` MUST do the same or it will crash on exactly these fixtures.
 - Version sub-numbers must stay `Double` comparisons identical to Python
   (`24.2`, `27.1`, `27.2`, `29`, `31`, `35`).
 - Endianness: all `<` (LE) via `ByteBuffer` LITTLE_ENDIAN.
